@@ -1,4 +1,5 @@
 use super::clipping::{clip_against_near, ClipVertex};
+use super::culling::is_back_facing;
 use super::depth::DepthBuffer;
 use super::framebuffer::{Color, Framebuffer};
 use super::lines::to_screen;
@@ -33,7 +34,9 @@ pub fn draw_mesh(
 
         for [a, b, c] in clip_against_near(clip_triangle).triangles() {
             let [a, b, c] = [a, b, c].map(|vertex| to_screen(vertex.position, width, height));
-            fill_triangle(framebuffer, depth_buffer, a, b, c, color);
+            if !is_back_facing(a, b, c) {
+                fill_triangle(framebuffer, depth_buffer, a, b, c, color);
+            }
         }
     }
 }
