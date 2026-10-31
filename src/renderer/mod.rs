@@ -14,6 +14,8 @@ pub mod warp_effect;
 
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
+use crate::debug::metrics::Metrics;
+use culling::Frustum;
 use depth::DepthBuffer;
 use dithering::dither;
 use framebuffer::{Color, Framebuffer};
@@ -29,6 +31,8 @@ const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
 const STAR_SEED: u32 = 20_260_001;
 const STAR_COUNT: usize = 1800;
+const LOD_HIGH_DISTANCE: f32 = 12.0;
+const LOD_MEDIUM_DISTANCE: f32 = 40.0;
 const CRATER_RIM_END: f32 = 1.4;
 const CRATER_RIM_HEIGHT: f32 = 0.3;
 
@@ -59,6 +63,30 @@ pub struct RenderObject<'a> {
     pub model_matrix: Mat4,
     pub material: Material,
     pub bounding_radius: f32,
+    pub lod: Option<&'a LodGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LodGroup {
+    pub levels: [Mesh; 3],
+}
+
+impl LodGroup {
+    pub fn new(mut build: impl FnMut(usize) -> Mesh) -> Self {
+        Self {
+            levels: [build(0), build(1), build(2)],
+        }
+    }
+
+    pub fn select(&self, relative_distance: f32) -> &Mesh {
+        if relative_distance < LOD_HIGH_DISTANCE {
+            &self.levels[0]
+        } else if relative_distance < LOD_MEDIUM_DISTANCE {
+            &self.levels[1]
+        } else {
+            &self.levels[2]
+        }
+    }
 }
 
 struct QueuedLine {
@@ -73,6 +101,7 @@ pub struct Renderer {
     pub dithering_enabled: bool,
     pub outline_enabled: bool,
     pub warp: WarpEffect,
+    pub metrics: Metrics,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
     object_buffer: ObjectBuffer,
@@ -88,6 +117,7 @@ impl Renderer {
             dithering_enabled: true,
             outline_enabled: true,
             warp: WarpEffect::new(),
+            metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
             object_buffer: ObjectBuffer::new(),
@@ -112,13 +142,29 @@ impl Renderer {
         self.object_buffer.clear();
         let object_buffer = &mut self.object_buffer;
 
+        let frustum = Frustum::from_view_projection(view_projection);
+        let mut drawn_triangles = 0;
+        let mut processed_triangles = 0;
+        let mut culled_objects = 0;
+
         for (index, object) in objects.iter().enumerate() {
+            let model = object.model_matrix.rows;
+            let center = Vec3::new(model[0][3], model[1][3], model[2][3]);
+            if !frustum.contains_sphere(center, object.bounding_radius) {
+                culled_objects += 1;
+                continue;
+            }
+            let distance = (center - camera.position).length();
+            let relative_distance = distance / object.bounding_radius.max(f32::EPSILON);
+            let mesh = object
+                .lod
+                .map_or(object.mesh, |group| group.select(relative_distance));
             let material = object.material;
             let object_id = index as u32 + 1;
-            pipeline::draw_mesh(
+            let stats = pipeline::draw_mesh(
                 &mut self.framebuffer,
                 &mut self.depth_buffer,
-                object.mesh,
+                mesh,
                 object.model_matrix,
                 view_projection,
                 |fragment| {
@@ -136,7 +182,11 @@ impl Renderer {
                     }
                 },
             );
+            processed_triangles += stats.processed;
+            drawn_triangles += stats.drawn;
         }
+        self.metrics
+            .record_frame(processed_triangles, drawn_triangles, culled_objects);
 
         if self.outline_enabled {
             self.draw_outlines(objects, camera);
@@ -189,6 +239,10 @@ impl Renderer {
                 self.framebuffer.set_pixel(column, row, color);
             }
         }
+    }
+
+    pub fn draw_metrics(&mut self, color: Color) {
+        self.metrics.draw(&mut self.framebuffer, color);
     }
 
     pub fn draw_crosshair(&mut self, color: Color) {
