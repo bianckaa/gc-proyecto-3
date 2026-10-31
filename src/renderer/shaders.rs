@@ -122,9 +122,21 @@ fn shade_lava(input: &ShadeInput) -> Surface {
     }
 }
 
+fn shade_rocky(input: &ShadeInput) -> Surface {
+    let point = input.fragment.local_position;
+    let boulders = fbm(point * 5.0);
+    let grit = value_noise(point * 28.0);
+    let roughness = 0.45 + boulders * 0.7 + (grit - 0.5) * 0.35;
+    Surface {
+        color: input.material.base_color * (0.8 + boulders * 0.3),
+        intensity: lit_intensity(input) * roughness,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderKind {
     Lambert,
+    Rocky,
     Lava,
     Toon,
     GasGiant,
@@ -134,6 +146,7 @@ pub enum ShaderKind {
 pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
         ShaderKind::Lambert => shade_lambert(input),
+        ShaderKind::Rocky => shade_rocky(input),
         ShaderKind::Lava => shade_lava(input),
         ShaderKind::Toon => shade_toon(input),
         ShaderKind::GasGiant => shade_gas_giant(input),
