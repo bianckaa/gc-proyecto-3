@@ -7,6 +7,12 @@ use super::rasterizer::{fill_shaded_triangle, Fragment, ShadedVertex};
 use super::{Mesh, Vertex};
 use crate::engine::math::Mat4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DrawStats {
+    pub processed: usize,
+    pub drawn: usize,
+}
+
 fn to_clip_space(vertex: &Vertex, model: Mat4, view_projection: Mat4) -> ClipVertex {
     let world = model * vertex.position.extend(1.0);
     ClipVertex {
@@ -36,9 +42,13 @@ pub fn draw_mesh(
     model: Mat4,
     view_projection: Mat4,
     mut shade: impl FnMut(&Fragment) -> Color,
-) {
+) -> DrawStats {
     let width = framebuffer.width() as f32;
     let height = framebuffer.height() as f32;
+    let mut stats = DrawStats {
+        processed: mesh.triangle_count(),
+        drawn: 0,
+    };
 
     for triangle in mesh.indices.chunks_exact(3) {
         let clip_triangle = [triangle[0], triangle[1], triangle[2]]
@@ -48,7 +58,9 @@ pub fn draw_mesh(
             let shaded = clipped.map(|vertex| to_shaded(vertex, width, height));
             if !is_back_facing(shaded[0].screen, shaded[1].screen, shaded[2].screen) {
                 fill_shaded_triangle(framebuffer, depth_buffer, shaded, &mut shade);
+                stats.drawn += 1;
             }
         }
     }
+    stats
 }
