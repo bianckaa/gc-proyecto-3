@@ -97,9 +97,24 @@ fn shade_gas_giant(input: &ShadeInput) -> Surface {
     }
 }
 
+fn shade_toon(input: &ShadeInput) -> Surface {
+    let light = lit_intensity(input);
+    let intensity = match light {
+        l if l > 0.75 => 1.0,
+        l if l > 0.45 => 0.6,
+        l if l > 0.2 => 0.3,
+        _ => 0.08,
+    };
+    Surface {
+        color: input.material.base_color,
+        intensity,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderKind {
     Lambert,
+    Toon,
     GasGiant,
     Sun,
 }
@@ -107,6 +122,7 @@ pub enum ShaderKind {
 pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
         ShaderKind::Lambert => shade_lambert(input),
+        ShaderKind::Toon => shade_toon(input),
         ShaderKind::GasGiant => shade_gas_giant(input),
         ShaderKind::Sun => shade_sun(input),
     };
