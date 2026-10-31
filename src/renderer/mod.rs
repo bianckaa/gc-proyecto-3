@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod rasterizer;
 pub mod shaders;
 pub mod skybox;
+pub mod warp_effect;
 
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
@@ -20,6 +21,7 @@ use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use shaders::{shade, ShadeInput, ShaderKind};
 use skybox::Skybox;
+use warp_effect::WarpEffect;
 
 const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
@@ -66,6 +68,7 @@ pub struct Renderer {
     pub light: PointLight,
     pub dithering_enabled: bool,
     pub outline_enabled: bool,
+    pub warp: WarpEffect,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
     object_buffer: ObjectBuffer,
@@ -80,6 +83,7 @@ impl Renderer {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
             dithering_enabled: true,
             outline_enabled: true,
+            warp: WarpEffect::new(),
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
             object_buffer: ObjectBuffer::new(),
@@ -145,6 +149,9 @@ impl Renderer {
                 line.dashed,
             );
         }
+
+        self.warp
+            .apply(&mut self.framebuffer, self.skybox.visible_stars());
     }
 
     fn draw_outlines(&mut self, objects: &[RenderObject], camera: &Camera) {
