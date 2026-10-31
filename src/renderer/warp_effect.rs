@@ -11,6 +11,14 @@ const FLASH_START: f32 = 0.75;
 const MAX_FLASH: f32 = 0.85;
 const BYTES_PER_PIXEL: usize = 4;
 
+fn flash_amount(intensity: f32) -> f32 {
+    ((intensity - FLASH_START) / (1.0 - FLASH_START)).max(0.0) * MAX_FLASH
+}
+
+fn brighten(channel: u8, flash: f32) -> u8 {
+    (channel as f32 + (255.0 - channel as f32) * flash) as u8
+}
+
 pub struct WarpEffect {
     elapsed: Option<f32>,
     source: Vec<u8>,
@@ -44,12 +52,11 @@ impl WarpEffect {
             .map_or(0.0, |elapsed| (elapsed / WARP_DURATION * PI).sin())
     }
 
-    fn distort(&mut self, framebuffer: &mut Framebuffer, intensity: f32) {
+    fn distort(&mut self, framebuffer: &mut Framebuffer, intensity: f32, flash: f32) {
         let width = framebuffer.width() as i32;
         let height = framebuffer.height() as i32;
         let (center_x, center_y) = (width as f32 * 0.5, height as f32 * 0.5);
         let max_radius_squared = center_x * center_x + center_y * center_y;
-        let flash = ((intensity - FLASH_START) / (1.0 - FLASH_START)).max(0.0) * MAX_FLASH;
 
         self.source.clear();
         self.source.extend_from_slice(framebuffer.pixels());
@@ -63,13 +70,10 @@ impl WarpEffect {
                 let source_x = (center_x + dx * pull) as i32;
                 let source_y = (center_y + dy * pull) as i32;
                 let start = (source_y * width + source_x) as usize * BYTES_PER_PIXEL;
-                let brighten = |channel: u8| {
-                    (channel as f32 + (255.0 - channel as f32) * flash) as u8
-                };
                 let color = Color::new(
-                    brighten(self.source[start]),
-                    brighten(self.source[start + 1]),
-                    brighten(self.source[start + 2]),
+                    brighten(self.source[start], flash),
+                    brighten(self.source[start + 1], flash),
+                    brighten(self.source[start + 2], flash),
                 );
                 framebuffer.set_pixel(x, y, color);
             }
@@ -81,7 +85,8 @@ impl WarpEffect {
             return;
         }
         let intensity = self.intensity();
-        self.distort(framebuffer, intensity);
+        let flash = flash_amount(intensity);
+        self.distort(framebuffer, intensity, flash);
 
         let center_x = framebuffer.width() as f32 * 0.5;
         let center_y = framebuffer.height() as f32 * 0.5;
@@ -93,7 +98,12 @@ impl WarpEffect {
             let radius = (dx * dx + dy * dy).sqrt().max(1.0);
             let end_x = star.x + (dx / radius * length) as i32;
             let end_y = star.y + (dy / radius * length) as i32;
-            draw_line_2d(framebuffer, star.x, star.y, end_x, end_y, star.color);
+            let color = Color::new(
+                brighten(star.color.r, flash),
+                brighten(star.color.g, flash),
+                brighten(star.color.b, flash),
+            );
+            draw_line_2d(framebuffer, star.x, star.y, end_x, end_y, color);
         }
     }
 }

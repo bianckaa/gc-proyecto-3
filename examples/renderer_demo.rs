@@ -145,6 +145,11 @@ fn main() {
             renderer.outline_enabled = !renderer.outline_enabled;
         }
 
+        if rl.is_key_pressed(KeyboardKey::KEY_SPACE) {
+            renderer.warp.start_warp();
+        }
+        renderer.warp.update(delta_time);
+
         let distance = MOVE_SPEED * delta_time;
         let angle = TURN_SPEED * delta_time;
         camera.move_local(
