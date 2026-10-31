@@ -5,6 +5,7 @@ pub mod dithering;
 pub mod framebuffer;
 pub mod lighting;
 pub mod lines;
+pub mod outline;
 pub mod pipeline;
 pub mod rasterizer;
 pub mod shaders;
@@ -15,6 +16,7 @@ use depth::DepthBuffer;
 use dithering::dither;
 use framebuffer::{Color, Framebuffer};
 use lighting::PointLight;
+use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use shaders::{shade, ShadeInput, ShaderKind};
 
 const DEFAULT_AMBIENT: f32 = 0.12;
@@ -59,8 +61,11 @@ struct QueuedLine {
 pub struct Renderer {
     pub light: PointLight,
     pub dithering_enabled: bool,
+    pub outline_enabled: bool,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
+    object_buffer: ObjectBuffer,
+    outline_pixels: Vec<OutlinePixel>,
     queued_lines: Vec<QueuedLine>,
 }
 
@@ -69,8 +74,11 @@ impl Renderer {
         Self {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
             dithering_enabled: true,
+            outline_enabled: true,
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
+            object_buffer: ObjectBuffer::new(),
+            outline_pixels: Vec::new(),
             queued_lines: Vec::new(),
         }
     }
@@ -86,8 +94,12 @@ impl Renderer {
         let light = self.light;
         let dithering_enabled = self.dithering_enabled;
 
-        for object in objects {
+        self.object_buffer.clear();
+        let object_buffer = &mut self.object_buffer;
+
+        for (index, object) in objects.iter().enumerate() {
             let material = object.material;
+            let object_id = index as u32 + 1;
             pipeline::draw_mesh(
                 &mut self.framebuffer,
                 &mut self.depth_buffer,
@@ -95,6 +107,7 @@ impl Renderer {
                 object.model_matrix,
                 view_projection,
                 |fragment| {
+                    object_buffer.set(fragment.x, fragment.y, object_id);
                     let surface = shade(&ShadeInput {
                         fragment,
                         material: &material,
@@ -110,6 +123,10 @@ impl Renderer {
             );
         }
 
+        if self.outline_enabled {
+            self.draw_outlines(objects, camera);
+        }
+
         for line in self.queued_lines.drain(..) {
             lines::draw_line_3d(
                 &mut self.framebuffer,
@@ -120,6 +137,23 @@ impl Renderer {
                 line.color,
                 line.dashed,
             );
+        }
+    }
+
+    fn draw_outlines(&mut self, objects: &[RenderObject], camera: &Camera) {
+        find_outline_pixels(
+            &self.object_buffer,
+            &self.depth_buffer,
+            camera.near,
+            camera.far,
+            &mut self.outline_pixels,
+        );
+        for pixel in &self.outline_pixels {
+            let material = objects[pixel.object_id as usize - 1].material;
+            if material.outline {
+                let color = Color::from_unit(material.base_color + material.emissive);
+                self.framebuffer.set_pixel(pixel.x, pixel.y, color);
+            }
         }
     }
 

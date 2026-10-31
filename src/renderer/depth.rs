@@ -19,6 +19,10 @@ impl DepthBuffer {
         self.depths.fill(f32::INFINITY);
     }
 
+    pub fn depth_at(&self, x: i32, y: i32) -> f32 {
+        self.depths[y as usize * self.width + x as usize]
+    }
+
     pub fn test_and_set(&mut self, x: i32, y: i32, depth: f32) -> bool {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return false;
