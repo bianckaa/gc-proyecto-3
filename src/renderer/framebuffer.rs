@@ -1,3 +1,5 @@
+use crate::engine::math::Vec3;
+
 pub const FRAMEBUFFER_WIDTH: usize = 480;
 pub const FRAMEBUFFER_HEIGHT: usize = 270;
 
@@ -15,6 +17,11 @@ impl Color {
 
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
+    }
+
+    pub fn from_unit(color: Vec3) -> Self {
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0) as u8;
+        Self::new(channel(color.x), channel(color.y), channel(color.z))
     }
 }
 

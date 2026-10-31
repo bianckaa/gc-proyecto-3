@@ -11,6 +11,7 @@ fn to_clip_space(vertex: &Vertex, model: Mat4, view_projection: Mat4) -> ClipVer
     let world = model * vertex.position.extend(1.0);
     ClipVertex {
         position: view_projection * world,
+        local_position: vertex.position,
         world_position: world.truncate(),
         normal: model.transform_normal(vertex.normal),
         uv: vertex.uv,
@@ -21,6 +22,7 @@ fn to_shaded(vertex: ClipVertex, width: f32, height: f32) -> ShadedVertex {
     ShadedVertex {
         screen: to_screen(vertex.position, width, height),
         inverse_w: 1.0 / vertex.position.w,
+        local_position: vertex.local_position,
         world_position: vertex.world_position,
         normal: vertex.normal,
         uv: vertex.uv,

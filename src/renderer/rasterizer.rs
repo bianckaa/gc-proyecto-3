@@ -19,6 +19,7 @@ impl ScreenVertex {
 pub struct ShadedVertex {
     pub screen: ScreenVertex,
     pub inverse_w: f32,
+    pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
@@ -26,6 +27,9 @@ pub struct ShadedVertex {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fragment {
+    pub x: i32,
+    pub y: i32,
+    pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
@@ -105,6 +109,9 @@ pub fn fill_shaded_triangle(
         let total = pa + pb + pc;
         let (pa, pb, pc) = (pa / total, pb / total, pc / total);
         let fragment = Fragment {
+            x,
+            y,
+            local_position: a.local_position * pa + b.local_position * pb + c.local_position * pc,
             world_position: a.world_position * pa + b.world_position * pb + c.world_position * pc,
             normal: (a.normal * pa + b.normal * pb + c.normal * pc).normalize(),
             uv: a.uv * pa + b.uv * pb + c.uv * pc,
@@ -135,6 +142,7 @@ mod tests {
         let shaded = |x: f32, y: f32, inverse_w: f32, u: f32| ShadedVertex {
             screen: ScreenVertex::new(x, y, 0.5),
             inverse_w,
+            local_position: Vec3::default(),
             world_position: Vec3::default(),
             normal: Vec3::new(0.0, 1.0, 0.0),
             uv: Vec2::new(u, 0.0),

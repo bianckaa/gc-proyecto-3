@@ -5,6 +5,7 @@ const MAX_CLIPPED_VERTICES: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ClipVertex {
     pub position: Vec4,
+    pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
@@ -14,7 +15,8 @@ impl ClipVertex {
     fn lerp(self, other: Self, t: f32) -> Self {
         Self {
             position: self.position + (other.position - self.position) * t,
-            world_position: self.world_position + (other.world_position - self.world_position) * t,
+            local_position: self.local_position + (other.local_position - self.local_position) * t,
+            world_position: self.world_position +(other.world_position - self.world_position) * t,
             normal: self.normal + (other.normal - self.normal) * t,
             uv: self.uv + (other.uv - self.uv) * t,
         }
