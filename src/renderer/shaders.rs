@@ -70,14 +70,31 @@ fn shade_lambert(input: &ShadeInput) -> Surface {
     }
 }
 
+fn mix(from: Vec3, to: Vec3, t: f32) -> Vec3 {
+    from + (to - from) * t
+}
+
+fn shade_sun(input: &ShadeInput) -> Surface {
+    let time = input.time;
+    let point = input.fragment.local_position * 3.0 + Vec3::new(time * 0.4, time * 0.3, 0.0);
+    let turbulence = fbm(point + Vec3::new(fbm(point), 0.0, 0.0) * 2.0);
+    let pulse = 0.9 + 0.1 * (time * 2.0).sin();
+    Surface {
+        color: mix(input.material.base_color, Vec3::new(1.0, 1.0, 0.85), turbulence),
+        intensity: (0.25 + turbulence * 1.1) * pulse,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderKind {
     Lambert,
+    Sun,
 }
 
 pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
         ShaderKind::Lambert => shade_lambert(input),
+        ShaderKind::Sun => shade_sun(input),
     };
     Surface {
         color: surface.color + input.material.emissive,
