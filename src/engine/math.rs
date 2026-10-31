@@ -128,6 +128,86 @@ impl Mat4 {
     }
 }
 
+impl Mat4 {
+    pub fn translation(offset: Vec3) -> Self {
+        let mut result = Self::identity();
+        result.rows[0][3] = offset.x;
+        result.rows[1][3] = offset.y;
+        result.rows[2][3] = offset.z;
+        result
+    }
+
+    pub fn scale(factors: Vec3) -> Self {
+        let mut result = Self::identity();
+        result.rows[0][0] = factors.x;
+        result.rows[1][1] = factors.y;
+        result.rows[2][2] = factors.z;
+        result
+    }
+
+    pub fn rotation_x(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        let mut result = Self::identity();
+        result.rows[1][1] = cos;
+        result.rows[1][2] = -sin;
+        result.rows[2][1] = sin;
+        result.rows[2][2] = cos;
+        result
+    }
+
+    pub fn rotation_y(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        let mut result = Self::identity();
+        result.rows[0][0] = cos;
+        result.rows[0][2] = sin;
+        result.rows[2][0] = -sin;
+        result.rows[2][2] = cos;
+        result
+    }
+
+    pub fn rotation_z(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        let mut result = Self::identity();
+        result.rows[0][0] = cos;
+        result.rows[0][1] = -sin;
+        result.rows[1][0] = sin;
+        result.rows[1][1] = cos;
+        result
+    }
+
+    pub fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> Self {
+        let forward = (target - eye).normalize();
+        let right = forward.cross(up).normalize();
+        let true_up = right.cross(forward);
+        Self {
+            rows: [
+                [right.x, right.y, right.z, -right.dot(eye)],
+                [true_up.x, true_up.y, true_up.z, -true_up.dot(eye)],
+                [-forward.x, -forward.y, -forward.z, forward.dot(eye)],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    pub fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Self {
+        let focal = 1.0 / (fov_y * 0.5).tan();
+        let depth_range = near - far;
+        Self {
+            rows: [
+                [focal / aspect, 0.0, 0.0, 0.0],
+                [0.0, focal, 0.0, 0.0],
+                [
+                    0.0,
+                    0.0,
+                    (far + near) / depth_range,
+                    2.0 * far * near / depth_range,
+                ],
+                [0.0, 0.0, -1.0, 0.0],
+            ],
+        }
+    }
+}
+
 impl Default for Mat4 {
     fn default() -> Self {
         Self::identity()
