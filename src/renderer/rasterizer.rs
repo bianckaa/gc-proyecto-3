@@ -1,5 +1,6 @@
 use super::depth::DepthBuffer;
 use super::framebuffer::{Color, Framebuffer};
+use crate::engine::math::{Vec2, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenVertex {
@@ -14,17 +15,33 @@ impl ScreenVertex {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadedVertex {
+    pub screen: ScreenVertex,
+    pub inverse_w: f32,
+    pub world_position: Vec3,
+    pub normal: Vec3,
+    pub uv: Vec2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fragment {
+    pub world_position: Vec3,
+    pub normal: Vec3,
+    pub uv: Vec2,
+}
+
 fn edge(a: ScreenVertex, b: ScreenVertex, px: f32, py: f32) -> f32 {
     (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
 }
 
-pub fn fill_triangle(
-    framebuffer: &mut Framebuffer,
-    depth_buffer: &mut DepthBuffer,
+fn for_each_covered_pixel(
+    width: usize,
+    height: usize,
     a: ScreenVertex,
     b: ScreenVertex,
     c: ScreenVertex,
-    color: Color,
+    mut visit: impl FnMut(i32, i32, [f32; 3]),
 ) {
     let area = edge(a, b, c.x, c.y);
     if area == 0.0 {
@@ -33,8 +50,8 @@ pub fn fill_triangle(
 
     let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as i32;
     let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as i32;
-    let max_x = a.x.max(b.x).max(c.x).ceil().min(framebuffer.width() as f32 - 1.0) as i32;
-    let max_y = a.y.max(b.y).max(c.y).ceil().min(framebuffer.height() as f32 - 1.0) as i32;
+    let max_x = a.x.max(b.x).max(c.x).ceil().min(width as f32 - 1.0) as i32;
+    let max_y = a.y.max(b.y).max(c.y).ceil().min(height as f32 - 1.0) as i32;
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {
@@ -46,12 +63,54 @@ pub fn fill_triangle(
             if weight_a < 0.0 || weight_b < 0.0 || weight_c < 0.0 {
                 continue;
             }
-            let depth = weight_a * a.depth + weight_b * b.depth + weight_c * c.depth;
-            if depth_buffer.test_and_set(x, y, depth) {
-                framebuffer.set_pixel(x, y, color);
-            }
+            visit(x, y, [weight_a, weight_b, weight_c]);
         }
     }
+}
+
+pub fn fill_triangle(
+    framebuffer: &mut Framebuffer,
+    depth_buffer: &mut DepthBuffer,
+    a: ScreenVertex,
+    b: ScreenVertex,
+    c: ScreenVertex,
+    color: Color,
+) {
+    let (width, height) = (framebuffer.width(), framebuffer.height());
+    for_each_covered_pixel(width, height, a, b, c, |x, y, [wa, wb, wc]| {
+        let depth = wa * a.depth + wb * b.depth + wc * c.depth;
+        if depth_buffer.test_and_set(x, y, depth) {
+            framebuffer.set_pixel(x, y, color);
+        }
+    });
+}
+
+pub fn fill_shaded_triangle(
+    framebuffer: &mut Framebuffer,
+    depth_buffer: &mut DepthBuffer,
+    vertices: [ShadedVertex; 3],
+    mut shade: impl FnMut(&Fragment) -> Color,
+) {
+    let [a, b, c] = vertices;
+    let (width, height) = (framebuffer.width(), framebuffer.height());
+    for_each_covered_pixel(width, height, a.screen, b.screen, c.screen, |x, y, weights| {
+        let [wa, wb, wc] = weights;
+        let depth = wa * a.screen.depth + wb * b.screen.depth + wc * c.screen.depth;
+        if !depth_buffer.test_and_set(x, y, depth) {
+            return;
+        }
+        let pa = wa * a.inverse_w;
+        let pb = wb * b.inverse_w;
+        let pc = wc * c.inverse_w;
+        let total = pa + pb + pc;
+        let (pa, pb, pc) = (pa / total, pb / total, pc / total);
+        let fragment = Fragment {
+            world_position: a.world_position * pa + b.world_position * pb + c.world_position * pc,
+            normal: (a.normal * pa + b.normal * pb + c.normal * pc).normalize(),
+            uv: a.uv * pa + b.uv * pb + c.uv * pc,
+        };
+        framebuffer.set_pixel(x, y, shade(&fragment));
+    });
 }
 
 #[cfg(test)]
@@ -69,6 +128,31 @@ mod tests {
             ScreenVertex::new(100.0, 10.0, depth),
             ScreenVertex::new(10.0, 100.0, depth),
         ]
+    }
+
+    #[test]
+    fn uv_interpolation_favors_the_near_vertex() {
+        let shaded = |x: f32, y: f32, inverse_w: f32, u: f32| ShadedVertex {
+            screen: ScreenVertex::new(x, y, 0.5),
+            inverse_w,
+            world_position: Vec3::default(),
+            normal: Vec3::new(0.0, 1.0, 0.0),
+            uv: Vec2::new(u, 0.0),
+        };
+        let vertices = [
+            shaded(0.0, 0.0, 1.0, 0.0),
+            shaded(100.0, 0.0, 0.1, 1.0),
+            shaded(0.0, 100.0, 1.0, 0.0),
+        ];
+        let mut framebuffer = Framebuffer::new();
+        let mut depth_buffer = DepthBuffer::new();
+        let mut sampled = Vec::new();
+        fill_shaded_triangle(&mut framebuffer, &mut depth_buffer, vertices, |fragment| {
+            sampled.push(*fragment);
+            Color::BLACK
+        });
+        let expected = 0.0505 / 0.5455;
+        assert!((sampled[50].uv.x - expected).abs() < 0.001);
     }
 
     #[test]
