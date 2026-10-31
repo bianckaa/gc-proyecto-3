@@ -9,6 +9,7 @@ pub mod outline;
 pub mod pipeline;
 pub mod rasterizer;
 pub mod shaders;
+pub mod skybox;
 
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
@@ -18,9 +19,12 @@ use framebuffer::{Color, Framebuffer};
 use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use shaders::{shade, ShadeInput, ShaderKind};
+use skybox::Skybox;
 
 const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
+const STAR_SEED: u32 = 20_260_001;
+const STAR_COUNT: usize = 1800;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vertex {
@@ -66,6 +70,7 @@ pub struct Renderer {
     depth_buffer: DepthBuffer,
     object_buffer: ObjectBuffer,
     outline_pixels: Vec<OutlinePixel>,
+    skybox: Skybox,
     queued_lines: Vec<QueuedLine>,
 }
 
@@ -79,6 +84,7 @@ impl Renderer {
             depth_buffer: DepthBuffer::new(),
             object_buffer: ObjectBuffer::new(),
             outline_pixels: Vec::new(),
+            skybox: Skybox::new(STAR_SEED, STAR_COUNT),
             queued_lines: Vec::new(),
         }
     }
@@ -90,6 +96,7 @@ impl Renderer {
     pub fn render(&mut self, objects: &[RenderObject], camera: &Camera, time: f32) {
         self.framebuffer.clear(Color::BLACK);
         self.depth_buffer.clear();
+        self.skybox.draw(&mut self.framebuffer, camera, time);
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
         let dithering_enabled = self.dithering_enabled;
