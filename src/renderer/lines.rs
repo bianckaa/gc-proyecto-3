@@ -112,7 +112,7 @@ fn clip_to_near(a: Vec4, b: Vec4) -> Option<(Vec4, Vec4)> {
     }
 }
 
-fn to_screen(clip: Vec4, width: f32, height: f32) -> ScreenVertex {
+pub(super) fn to_screen(clip: Vec4, width: f32, height: f32) -> ScreenVertex {
     let inverse_w = 1.0 / clip.w;
     ScreenVertex::new(
         (clip.x * inverse_w + 1.0) * 0.5 * width,
