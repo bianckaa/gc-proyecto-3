@@ -100,6 +100,8 @@ pub struct Renderer {
     pub light: PointLight,
     pub dithering_enabled: bool,
     pub outline_enabled: bool,
+    pub culling_enabled: bool,
+    pub lod_enabled: bool,
     pub warp: WarpEffect,
     pub metrics: Metrics,
     framebuffer: Framebuffer,
@@ -116,6 +118,8 @@ impl Renderer {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
             dithering_enabled: true,
             outline_enabled: true,
+            culling_enabled: true,
+            lod_enabled: true,
             warp: WarpEffect::new(),
             metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
@@ -150,7 +154,7 @@ impl Renderer {
         for (index, object) in objects.iter().enumerate() {
             let model = object.model_matrix.rows;
             let center = Vec3::new(model[0][3], model[1][3], model[2][3]);
-            if !frustum.contains_sphere(center, object.bounding_radius) {
+            if self.culling_enabled && !frustum.contains_sphere(center, object.bounding_radius) {
                 culled_objects += 1;
                 continue;
             }
@@ -158,6 +162,7 @@ impl Renderer {
             let relative_distance = distance / object.bounding_radius.max(f32::EPSILON);
             let mesh = object
                 .lod
+                .filter(|_| self.lod_enabled)
                 .map_or(object.mesh, |group| group.select(relative_distance));
             let material = object.material;
             let object_id = index as u32 + 1;
