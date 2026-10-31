@@ -1,6 +1,7 @@
 pub mod clipping;
 pub mod culling;
 pub mod depth;
+pub mod dithering;
 pub mod framebuffer;
 pub mod lighting;
 pub mod lines;
@@ -11,6 +12,7 @@ pub mod shaders;
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
 use depth::DepthBuffer;
+use dithering::dither;
 use framebuffer::{Color, Framebuffer};
 use lighting::PointLight;
 use shaders::{shade, ShadeInput, ShaderKind};
@@ -56,6 +58,7 @@ struct QueuedLine {
 
 pub struct Renderer {
     pub light: PointLight,
+    pub dithering_enabled: bool,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
     queued_lines: Vec<QueuedLine>,
@@ -65,6 +68,7 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
+            dithering_enabled: true,
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
             queued_lines: Vec::new(),
@@ -80,6 +84,7 @@ impl Renderer {
         self.depth_buffer.clear();
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
+        let dithering_enabled = self.dithering_enabled;
 
         for object in objects {
             let material = object.material;
@@ -96,7 +101,11 @@ impl Renderer {
                         light: &light,
                         time,
                     });
-                    Color::from_unit(surface.color * surface.intensity)
+                    if dithering_enabled {
+                        dither(surface, fragment.x, fragment.y)
+                    } else {
+                        Color::from_unit(surface.color * surface.intensity)
+                    }
                 },
             );
         }
