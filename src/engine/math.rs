@@ -129,6 +129,20 @@ impl Mat4 {
 }
 
 impl Mat4 {
+    pub fn transform_normal(self, normal: Vec3) -> Vec3 {
+        let row = |index: usize| {
+            let r = self.rows[index];
+            Vec3::new(r[0], r[1], r[2])
+        };
+        let (x_axis, y_axis, z_axis) = (row(0), row(1), row(2));
+        Vec3::new(
+            y_axis.cross(z_axis).dot(normal),
+            z_axis.cross(x_axis).dot(normal),
+            x_axis.cross(y_axis).dot(normal),
+        )
+        .normalize()
+    }
+
     pub fn translation(offset: Vec3) -> Self {
         let mut result = Self::identity();
         result.rows[0][3] = offset.x;
