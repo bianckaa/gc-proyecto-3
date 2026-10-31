@@ -1,131 +1,101 @@
 use gc_proyecto_3::engine::camera::Camera;
 use gc_proyecto_3::engine::math::{Mat4, Vec2, Vec3};
-use gc_proyecto_3::renderer::depth::DepthBuffer;
-use gc_proyecto_3::renderer::framebuffer::{Color, Framebuffer, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
-use gc_proyecto_3::renderer::lines::{draw_line_2d, draw_line_3d};
-use gc_proyecto_3::renderer::pipeline::draw_mesh;
-use gc_proyecto_3::renderer::rasterizer::Fragment;
-use gc_proyecto_3::renderer::{Mesh, Vertex};
+use gc_proyecto_3::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
+use gc_proyecto_3::renderer::shaders::ShaderKind;
+use gc_proyecto_3::renderer::{Material, Mesh, RenderObject, Renderer, Vertex};
 use raylib::prelude::*;
+use std::f32::consts::{PI, TAU};
 
 const WINDOW_SCALE: i32 = 2;
-const SPIN_SPEED: f32 = 1.0;
-const SHIP_ORBIT_RADIUS: f32 = 10.0;
-const SHIP_ORBIT_SPEED: f32 = 0.5;
-const SHIP_HEIGHT: f32 = 2.0;
-const FLOOR_SIZE: f32 = 30.0;
-const FLOOR_Y: f32 = -1.5;
-const FLOOR_TILES: f32 = 16.0;
+const SPHERE_RINGS: u32 = 24;
+const SPHERE_SEGMENTS: u32 = 36;
+const ORBIT_SEGMENTS: usize = 96;
 const MOVE_SPEED: f32 = 8.0;
 const TURN_SPEED: f32 = 1.5;
-const FOLLOW_DISTANCE: f32 = 5.0;
-const FOLLOW_HEIGHT: f32 = 2.0;
-const FOLLOW_LOOK_AHEAD: f32 = 6.0;
-const FOLLOW_SMOOTHING: f32 = 6.0;
+const SPIN_SPEED: f32 = 0.4;
+const INITIAL_PITCH: f32 = -0.42;
 
-fn push_vertices(mesh: &mut Mesh, positions: &[Vec3], uvs: &[Vec2], indices: &[u32]) {
-    let edge_a = positions[1] - positions[0];
-    let edge_b = positions[2] - positions[0];
-    let normal = edge_a.cross(edge_b).normalize();
-    let base = mesh.vertices.len() as u32;
-    for (&position, &uv) in positions.iter().zip(uvs) {
-        mesh.vertices.push(Vertex { position, normal, uv });
-    }
-    mesh.indices.extend(indices.iter().map(|index| base + index));
+struct Planet {
+    orbit_radius: f32,
+    orbit_speed: f32,
+    start_angle: f32,
+    radius: f32,
+    material: Material,
 }
 
-fn push_quad(mesh: &mut Mesh, corners: [Vec3; 4], tiles: f32) {
-    let uvs = [
-        Vec2::new(0.0, 0.0),
-        Vec2::new(tiles, 0.0),
-        Vec2::new(tiles, tiles),
-        Vec2::new(0.0, tiles),
-    ];
-    push_vertices(mesh, &corners, &uvs, &[0, 1, 2, 0, 2, 3]);
-}
-
-fn cube_mesh() -> Mesh {
-    let p = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
-    let corners = [
-        p(-1.0, -1.0, -1.0),
-        p(1.0, -1.0, -1.0),
-        p(1.0, 1.0, -1.0),
-        p(-1.0, 1.0, -1.0),
-        p(-1.0, -1.0, 1.0),
-        p(1.0, -1.0, 1.0),
-        p(1.0, 1.0, 1.0),
-        p(-1.0, 1.0, 1.0),
-    ];
-    let faces = [
-        [4, 5, 6, 7],
-        [1, 0, 3, 2],
-        [5, 1, 2, 6],
-        [0, 4, 7, 3],
-        [7, 6, 2, 3],
-        [0, 1, 5, 4],
-    ];
+fn sphere_mesh() -> Mesh {
     let mut mesh = Mesh::default();
-    for face in faces {
-        push_quad(&mut mesh, face.map(|index: usize| corners[index]), 1.0);
+    for ring in 0..=SPHERE_RINGS {
+        for segment in 0..=SPHERE_SEGMENTS {
+            let v = ring as f32 / SPHERE_RINGS as f32;
+            let u = segment as f32 / SPHERE_SEGMENTS as f32;
+            let (sin_polar, cos_polar) = (v * PI).sin_cos();
+            let (sin_azimuth, cos_azimuth) = (u * TAU).sin_cos();
+            let position = Vec3::new(sin_polar * cos_azimuth, cos_polar, sin_polar * sin_azimuth);
+            mesh.vertices.push(Vertex {
+                position,
+                normal: position,
+                uv: Vec2::new(u, v),
+            });
+        }
+    }
+    let stride = SPHERE_SEGMENTS + 1;
+    for ring in 0..SPHERE_RINGS {
+        for segment in 0..SPHERE_SEGMENTS {
+            let a = ring * stride + segment;
+            let b = a + stride;
+            let c = b + 1;
+            let d = a + 1;
+            mesh.indices.extend([a, c, b, a, d, c]);
+        }
     }
     mesh
 }
 
-fn floor_mesh() -> Mesh {
-    let mut mesh = Mesh::default();
-    let s = FLOOR_SIZE;
-    push_quad(
-        &mut mesh,
-        [
-            Vec3::new(-s, FLOOR_Y, s),
-            Vec3::new(s, FLOOR_Y, s),
-            Vec3::new(s, FLOOR_Y, -s),
-            Vec3::new(-s, FLOOR_Y, -s),
-        ],
-        FLOOR_TILES,
-    );
-    mesh
-}
-
-fn ship_mesh() -> Mesh {
-    let nose = Vec3::new(0.0, 0.0, -1.2);
-    let left = Vec3::new(-1.0, 0.0, 0.3);
-    let right = Vec3::new(1.0, 0.0, 0.3);
-    let top = Vec3::new(0.0, 0.25, 0.1);
-    let bottom = Vec3::new(0.0, -0.15, 0.1);
-    let faces = [
-        [nose, left, top],
-        [nose, top, right],
-        [left, right, top],
-        [nose, bottom, left],
-        [nose, right, bottom],
-        [right, left, bottom],
-    ];
-    let mut mesh = Mesh::default();
-    for face in faces {
-        push_vertices(&mut mesh, &face, &[Vec2::default(); 3], &[0, 1, 2]);
-    }
-    mesh
-}
-
-fn shade_checker(fragment: &Fragment) -> Color {
-    let cell = fragment.uv.x.floor() as i32 + fragment.uv.y.floor() as i32;
-    if cell.rem_euclid(2) == 0 {
-        Color::new(192, 80, 255)
-    } else {
-        Color::new(40, 16, 56)
+fn material(base_color: Vec3, shader: ShaderKind) -> Material {
+    Material {
+        base_color,
+        emissive: Vec3::default(),
+        shader,
+        outline: true,
     }
 }
 
-fn shade_normal(fragment: &Fragment) -> Color {
-    let channel = |value: f32| ((value * 0.5 + 0.5) * 255.0) as u8;
-    let n = fragment.normal;
-    Color::new(channel(n.x), channel(n.y), channel(n.z))
+fn planets() -> [Planet; 4] {
+    [
+        Planet {
+            orbit_radius: 4.5,
+            orbit_speed: 0.5,
+            start_angle: 0.6,
+            radius: 0.9,
+            material: material(Vec3::new(1.0, 0.25, 0.1), ShaderKind::Lava),
+        },
+        Planet {
+            orbit_radius: 7.0,
+            orbit_speed: 0.3,
+            start_angle: 2.4,
+            radius: 1.0,
+            material: material(Vec3::new(0.25, 0.75, 1.0), ShaderKind::Toon),
+        },
+        Planet {
+            orbit_radius: 9.5,
+            orbit_speed: 0.2,
+            start_angle: 4.0,
+            radius: 1.6,
+            material: material(Vec3::new(1.0, 0.7, 0.4), ShaderKind::GasGiant),
+        },
+        Planet {
+            orbit_radius: 12.0,
+            orbit_speed: 0.15,
+            start_angle: 5.4,
+            radius: 0.8,
+            material: material(Vec3::new(0.85, 0.76, 0.6), ShaderKind::Rocky),
+        },
+    ]
 }
 
-fn shade_ship(fragment: &Fragment) -> Color {
-    let light = 0.4 + 0.6 * fragment.normal.y.abs();
-    Color::new((92.0 * light) as u8, (255.0 * light) as u8, (92.0 * light) as u8)
+fn orbit_point(radius: f32, angle: f32) -> Vec3 {
+    Vec3::new(radius * angle.cos(), 0.0, radius * angle.sin())
 }
 
 fn axis(rl: &RaylibHandle, positive: KeyboardKey, negative: KeyboardKey) -> f32 {
@@ -151,104 +121,78 @@ fn main() {
         .expect("no se pudo crear la textura");
     texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
-    let mut framebuffer = Framebuffer::new();
-    let mut depth_buffer = DepthBuffer::new();
-    let cube = cube_mesh();
-    let floor = floor_mesh();
-    let ship = ship_mesh();
+    let mut renderer = Renderer::new();
+    let sphere = sphere_mesh();
+    let planets = planets();
+    let sun_material = Material {
+        emissive: Vec3::new(0.1, 0.05, 0.0),
+        ..material(Vec3::new(1.0, 0.65, 0.15), ShaderKind::Sun)
+    };
 
     let aspect = FRAMEBUFFER_WIDTH as f32 / FRAMEBUFFER_HEIGHT as f32;
-    let mut camera = Camera::new(Vec3::new(0.0, 3.0, 16.0), aspect);
-    let mut following = true;
-    let mut spin = 0.0_f32;
-    let mut ship_angle = 0.0_f32;
+    let mut camera = Camera::new(Vec3::new(0.0, 11.0, 20.0), aspect);
+    camera.rotate(0.0, INITIAL_PITCH, 0.0);
+    let mut time = 0.0_f32;
 
     while !rl.window_should_close() {
         let delta_time = rl.get_frame_time();
-        spin += SPIN_SPEED * delta_time;
-        ship_angle += SHIP_ORBIT_SPEED * delta_time;
+        time += delta_time;
 
-        let (sin, cos) = ship_angle.sin_cos();
-        let ship_position = Vec3::new(SHIP_ORBIT_RADIUS * cos, SHIP_HEIGHT, SHIP_ORBIT_RADIUS * sin);
-        let ship_forward = Vec3::new(-sin, 0.0, cos);
-        let ship_up = Vec3::new(0.0, 1.0, 0.0);
-
-        if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
-            following = !following;
+        if rl.is_key_pressed(KeyboardKey::KEY_B) {
+            renderer.dithering_enabled = !renderer.dithering_enabled;
         }
-        if following {
-            camera.follow(
-                ship_position,
-                ship_forward,
-                ship_up,
-                FOLLOW_DISTANCE,
-                FOLLOW_HEIGHT,
-                FOLLOW_LOOK_AHEAD,
-                FOLLOW_SMOOTHING,
-                delta_time,
-            );
-        } else {
-            let distance = MOVE_SPEED * delta_time;
-            let angle = TURN_SPEED * delta_time;
-            camera.move_local(
-                axis(&rl, KeyboardKey::KEY_W, KeyboardKey::KEY_S) * distance,
-                axis(&rl, KeyboardKey::KEY_D, KeyboardKey::KEY_A) * distance,
-                axis(&rl, KeyboardKey::KEY_E, KeyboardKey::KEY_Q) * distance,
-            );
-            camera.rotate(
-                axis(&rl, KeyboardKey::KEY_LEFT, KeyboardKey::KEY_RIGHT) * angle,
-                axis(&rl, KeyboardKey::KEY_UP, KeyboardKey::KEY_DOWN) * angle,
-                axis(&rl, KeyboardKey::KEY_C, KeyboardKey::KEY_Z) * angle,
-            );
+        if rl.is_key_pressed(KeyboardKey::KEY_O) {
+            renderer.outline_enabled = !renderer.outline_enabled;
         }
 
-        framebuffer.clear(Color::BLACK);
-        depth_buffer.clear();
-        let view_projection = camera.view_projection_matrix();
-
-        draw_mesh(
-            &mut framebuffer,
-            &mut depth_buffer,
-            &floor,
-            Mat4::identity(),
-            view_projection,
-            shade_checker,
+        let distance = MOVE_SPEED * delta_time;
+        let angle = TURN_SPEED * delta_time;
+        camera.move_local(
+            axis(&rl, KeyboardKey::KEY_W, KeyboardKey::KEY_S) * distance,
+            axis(&rl, KeyboardKey::KEY_D, KeyboardKey::KEY_A) * distance,
+            axis(&rl, KeyboardKey::KEY_E, KeyboardKey::KEY_Q) * distance,
         );
-        draw_mesh(
-            &mut framebuffer,
-            &mut depth_buffer,
-            &cube,
-            Mat4::rotation_y(spin) * Mat4::rotation_x(spin * 0.6),
-            view_projection,
-            shade_normal,
-        );
-        draw_mesh(
-            &mut framebuffer,
-            &mut depth_buffer,
-            &ship,
-            Mat4::translation(ship_position)
-                * Mat4::rotation_y(std::f32::consts::PI - ship_angle),
-            view_projection,
-            shade_ship,
-        );
-        draw_line_3d(
-            &mut framebuffer,
-            &mut depth_buffer,
-            view_projection,
-            ship_position,
-            ship_position + ship_forward * 20.0,
-            Color::new(255, 48, 64),
-            true,
+        camera.rotate(
+            axis(&rl, KeyboardKey::KEY_LEFT, KeyboardKey::KEY_RIGHT) * angle,
+            axis(&rl, KeyboardKey::KEY_UP, KeyboardKey::KEY_DOWN) * angle,
+            axis(&rl, KeyboardKey::KEY_C, KeyboardKey::KEY_Z) * angle,
         );
 
-        let center_x = FRAMEBUFFER_WIDTH as i32 / 2;
-        let center_y = FRAMEBUFFER_HEIGHT as i32 / 2;
-        let white = Color::new(255, 255, 255);
-        draw_line_2d(&mut framebuffer, center_x - 4, center_y, center_x + 4, center_y, white);
-        draw_line_2d(&mut framebuffer, center_x, center_y - 4, center_x, center_y + 4, white);
+        let spin = Mat4::rotation_y(time * SPIN_SPEED);
+        let mut objects = vec![RenderObject {
+            mesh: &sphere,
+            model_matrix: Mat4::scale(Vec3::new(2.0, 2.0, 2.0)) * spin,
+            material: sun_material,
+            bounding_radius: 2.0,
+        }];
+        for planet in &planets {
+            let center = orbit_point(
+                planet.orbit_radius,
+                planet.start_angle + time * planet.orbit_speed,
+            );
+            let size = Vec3::new(planet.radius, planet.radius, planet.radius);
+            objects.push(RenderObject {
+                mesh: &sphere,
+                model_matrix: Mat4::translation(center) * spin * Mat4::scale(size),
+                material: planet.material,
+                bounding_radius: planet.radius,
+            });
+            for segment in (0..ORBIT_SEGMENTS).step_by(2) {
+                let step = TAU / ORBIT_SEGMENTS as f32;
+                renderer.draw_line_3d(
+                    orbit_point(planet.orbit_radius, segment as f32 * step),
+                    orbit_point(planet.orbit_radius, (segment + 1) as f32 * step),
+                    Color::new(192, 80, 255),
+                    false,
+                );
+            }
+        }
+
+        renderer.render(&objects, &camera, time);
+        renderer.draw_crosshair(Color::new(255, 255, 255));
 
         texture
-            .update_texture(framebuffer.pixels())
+            .update_texture(renderer.pixels())
             .expect("no se pudo actualizar la textura");
 
         let mut drawing = rl.begin_drawing(&thread);
