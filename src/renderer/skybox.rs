@@ -27,12 +27,12 @@ pub struct Skybox {
     visible: Vec<VisibleStar>,
 }
 
-struct SeededRandom {
-    state: u32,
+pub(crate) struct SeededRandom {
+    pub(crate) state: u32,
 }
 
 impl SeededRandom {
-    fn next(&mut self) -> f32 {
+    pub(crate) fn next(&mut self) -> f32 {
         self.state = self.state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         (self.state >> 8) as f32 / (1u32 << 24) as f32
     }

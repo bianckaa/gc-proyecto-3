@@ -19,8 +19,8 @@ use dithering::dither;
 use framebuffer::{Color, Framebuffer};
 use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
-use shaders::{shade, ShadeInput, ShaderKind};
-use skybox::Skybox;
+use shaders::{fbm, shade, ShadeInput, ShaderKind};
+use skybox::{SeededRandom, Skybox};
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 use warp_effect::WarpEffect;
@@ -29,6 +29,8 @@ const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
 const STAR_SEED: u32 = 20_260_001;
 const STAR_COUNT: usize = 1800;
+const CRATER_RIM_END: f32 = 1.4;
+const CRATER_RIM_HEIGHT: f32 = 0.3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vertex {
@@ -227,6 +229,52 @@ const ICOSAHEDRON_FACES: [[u32; 3]; 20] = [
     [9, 8, 1],
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Deformation {
+    pub seed: u32,
+    pub amplitude: f32,
+    pub frequency: f32,
+    pub crater_count: u32,
+    pub crater_radius: f32,
+    pub crater_depth: f32,
+}
+
+impl Deformation {
+    fn crater_centers(&self) -> Vec<Vec3> {
+        let mut random = SeededRandom { state: self.seed };
+        (0..self.crater_count)
+            .map(|_| {
+                let height = random.next() * 2.0 - 1.0;
+                let azimuth = random.next() * TAU;
+                let ring = (1.0 - height * height).sqrt();
+                Vec3::new(ring * azimuth.cos(), height, ring * azimuth.sin())
+            })
+            .collect()
+    }
+
+    fn crater_height(&self, direction: Vec3, center: Vec3) -> f32 {
+        let distance = (direction - center).length() / self.crater_radius;
+        if distance < 1.0 {
+            -self.crater_depth * (1.0 - distance * distance)
+        } else if distance < CRATER_RIM_END {
+            let fade = (CRATER_RIM_END - distance) / (CRATER_RIM_END - 1.0);
+            self.crater_depth * CRATER_RIM_HEIGHT * fade
+        } else {
+            0.0
+        }
+    }
+
+    fn height(&self, direction: Vec3, craters: &[Vec3]) -> f32 {
+        let offset = Vec3::new(self.seed as f32 * 0.137, self.seed as f32 * 0.071, 0.0);
+        let terrain = (fbm(direction * self.frequency + offset) - 0.5) * 2.0 * self.amplitude;
+        let carved: f32 = craters
+            .iter()
+            .map(|&center| self.crater_height(direction, center))
+            .sum();
+        terrain + carved
+    }
+}
+
 fn sphere_vertex(direction: Vec3) -> Vertex {
     let position = direction.normalize();
     Vertex {
@@ -242,6 +290,32 @@ fn sphere_vertex(direction: Vec3) -> Vertex {
 impl Mesh {
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    pub fn recalculate_normals(&mut self) {
+        for vertex in &mut self.vertices {
+            vertex.normal = Vec3::default();
+        }
+        for triangle in self.indices.chunks_exact(3) {
+            let [a, b, c] = [triangle[0], triangle[1], triangle[2]].map(|index| index as usize);
+            let pa = self.vertices[a].position;
+            let face = (self.vertices[b].position - pa).cross(self.vertices[c].position - pa);
+            for index in [a, b, c] {
+                self.vertices[index].normal = self.vertices[index].normal + face;
+            }
+        }
+        for vertex in &mut self.vertices {
+            vertex.normal = vertex.normal.normalize();
+        }
+    }
+
+    pub fn deform(&mut self, deformation: &Deformation) {
+        let craters = deformation.crater_centers();
+        for vertex in &mut self.vertices {
+            let direction = vertex.position.normalize();
+            vertex.position = direction * (1.0 + deformation.height(direction, &craters));
+        }
+        self.recalculate_normals();
     }
 
     pub fn icosphere(subdivisions: u32) -> Self {
@@ -302,6 +376,27 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deformation_is_reproducible_and_bends_normals() {
+        let deformation = Deformation {
+            seed: 3,
+            amplitude: 0.2,
+            frequency: 3.0,
+            crater_count: 4,
+            crater_radius: 0.4,
+            crater_depth: 0.1,
+        };
+        let mut first = Mesh::icosphere(2);
+        let mut second = Mesh::icosphere(2);
+        first.deform(&deformation);
+        second.deform(&deformation);
+        assert_eq!(first, second);
+        assert!(first
+            .vertices
+            .iter()
+            .any(|vertex| vertex.normal.dot(vertex.position.normalize()) < 0.99));
+    }
 
     #[test]
     fn subdivision_quadruples_triangles_and_keeps_outward_winding() {
