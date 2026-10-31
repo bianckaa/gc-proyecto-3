@@ -21,6 +21,8 @@ use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use shaders::{shade, ShadeInput, ShaderKind};
 use skybox::Skybox;
+use std::collections::HashMap;
+use std::f32::consts::{PI, TAU};
 use warp_effect::WarpEffect;
 
 const DEFAULT_AMBIENT: f32 = 0.12;
@@ -199,5 +201,117 @@ impl Renderer {
 impl Default for Renderer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+const ICOSAHEDRON_FACES: [[u32; 3]; 20] = [
+    [0, 11, 5],
+    [0, 5, 1],
+    [0, 1, 7],
+    [0, 7, 10],
+    [0, 10, 11],
+    [1, 5, 9],
+    [5, 11, 4],
+    [11, 10, 2],
+    [10, 7, 6],
+    [7, 1, 8],
+    [3, 9, 4],
+    [3, 4, 2],
+    [3, 2, 6],
+    [3, 6, 8],
+    [3, 8, 9],
+    [4, 9, 5],
+    [2, 4, 11],
+    [6, 2, 10],
+    [8, 6, 7],
+    [9, 8, 1],
+];
+
+fn sphere_vertex(direction: Vec3) -> Vertex {
+    let position = direction.normalize();
+    Vertex {
+        position,
+        normal: position,
+        uv: Vec2::new(
+            0.5 + position.z.atan2(position.x) / TAU,
+            0.5 - position.y.asin() / PI,
+        ),
+    }
+}
+
+impl Mesh {
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    pub fn icosphere(subdivisions: u32) -> Self {
+        let t = (1.0 + 5.0_f32.sqrt()) * 0.5;
+        let corners = [
+            (-1.0, t, 0.0),
+            (1.0, t, 0.0),
+            (-1.0, -t, 0.0),
+            (1.0, -t, 0.0),
+            (0.0, -1.0, t),
+            (0.0, 1.0, t),
+            (0.0, -1.0, -t),
+            (0.0, 1.0, -t),
+            (t, 0.0, -1.0),
+            (t, 0.0, 1.0),
+            (-t, 0.0, -1.0),
+            (-t, 0.0, 1.0),
+        ];
+        let mut mesh = Self {
+            vertices: corners
+                .iter()
+                .map(|&(x, y, z)| sphere_vertex(Vec3::new(x, y, z)))
+                .collect(),
+            indices: ICOSAHEDRON_FACES.concat(),
+        };
+        for _ in 0..subdivisions {
+            mesh.subdivide_sphere();
+        }
+        mesh
+    }
+
+    fn subdivide_sphere(&mut self) {
+        let mut midpoints: HashMap<(u32, u32), u32> = HashMap::new();
+        let triangles = std::mem::take(&mut self.indices);
+        for triangle in triangles.chunks_exact(3) {
+            let (a, b, c) = (triangle[0], triangle[1], triangle[2]);
+            let ab = self.edge_midpoint(&mut midpoints, a, b);
+            let bc = self.edge_midpoint(&mut midpoints, b, c);
+            let ca = self.edge_midpoint(&mut midpoints, c, a);
+            self.indices
+                .extend([a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca]);
+        }
+    }
+
+    fn edge_midpoint(&mut self, midpoints: &mut HashMap<(u32, u32), u32>, a: u32, b: u32) -> u32 {
+        let key = (a.min(b), a.max(b));
+        if let Some(&index) = midpoints.get(&key) {
+            return index;
+        }
+        let middle = self.vertices[a as usize].position + self.vertices[b as usize].position;
+        let index = self.vertices.len() as u32;
+        self.vertices.push(sphere_vertex(middle));
+        midpoints.insert(key, index);
+        index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subdivision_quadruples_triangles_and_keeps_outward_winding() {
+        let mesh = Mesh::icosphere(2);
+        assert_eq!(mesh.triangle_count(), 320);
+        assert_eq!(mesh.vertices.len(), 162);
+        for triangle in mesh.indices.chunks_exact(3) {
+            let [a, b, c] = [triangle[0], triangle[1], triangle[2]]
+                .map(|index| mesh.vertices[index as usize].position);
+            assert!((b - a).cross(c - a).dot(a) > 0.0);
+        }
     }
 }
