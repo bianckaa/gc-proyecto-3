@@ -10,7 +10,7 @@ const BAYER_MATRIX: [[u8; BAYER_SIZE]; BAYER_SIZE] = [
     [15, 7, 13, 5],
 ];
 
-fn threshold(x: i32, y: i32) -> f32 {
+pub(crate) fn threshold(x: i32, y: i32) -> f32 {
     let row = y.rem_euclid(BAYER_SIZE as i32) as usize;
     let column = x.rem_euclid(BAYER_SIZE as i32) as usize;
     (BAYER_MATRIX[row][column] as f32 + 0.5) / BAYER_LEVELS

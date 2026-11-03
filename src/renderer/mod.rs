@@ -3,8 +3,10 @@ pub mod culling;
 pub mod depth;
 pub mod dithering;
 pub mod framebuffer;
+pub mod heat_haze;
 pub mod lighting;
 pub mod lines;
+pub mod obj;
 pub mod outline;
 pub mod pipeline;
 pub mod rasterizer;
@@ -19,6 +21,7 @@ use culling::Frustum;
 use depth::DepthBuffer;
 use dithering::dither;
 use framebuffer::{Color, Framebuffer};
+use heat_haze::HeatHaze;
 use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use shaders::{fbm, shade, ShadeInput, ShaderKind};
@@ -99,6 +102,7 @@ struct QueuedLine {
 pub struct Renderer {
     pub light: PointLight,
     pub dithering_enabled: bool,
+    pub heat_haze_enabled: bool,
     pub outline_enabled: bool,
     pub culling_enabled: bool,
     pub lod_enabled: bool,
@@ -108,6 +112,7 @@ pub struct Renderer {
     depth_buffer: DepthBuffer,
     object_buffer: ObjectBuffer,
     outline_pixels: Vec<OutlinePixel>,
+    heat_haze: HeatHaze,
     skybox: Skybox,
     queued_lines: Vec<QueuedLine>,
 }
@@ -117,6 +122,7 @@ impl Renderer {
         Self {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
             dithering_enabled: true,
+            heat_haze_enabled: false,
             outline_enabled: true,
             culling_enabled: true,
             lod_enabled: true,
@@ -126,6 +132,7 @@ impl Renderer {
             depth_buffer: DepthBuffer::new(),
             object_buffer: ObjectBuffer::new(),
             outline_pixels: Vec::new(),
+            heat_haze: HeatHaze::new(),
             skybox: Skybox::new(STAR_SEED, STAR_COUNT),
             queued_lines: Vec::new(),
         }
@@ -192,6 +199,11 @@ impl Renderer {
         }
         self.metrics
             .record_frame(processed_triangles, drawn_triangles, culled_objects);
+
+        if self.heat_haze_enabled {
+            self.heat_haze
+                .apply(&mut self.framebuffer, &self.object_buffer, objects, time);
+        }
 
         if self.outline_enabled {
             self.draw_outlines(objects, camera);

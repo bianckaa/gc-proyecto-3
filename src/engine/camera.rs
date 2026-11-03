@@ -55,6 +55,10 @@ impl Camera {
         self.up = right.cross(self.forward);
     }
 
+    pub fn look_at(&mut self, target: Vec3) {
+        self.set_orientation(target - self.position, Vec3::new(0.0, 1.0, 0.0));
+    }
+
     pub fn move_local(&mut self, forward: f32, right: f32, up: f32) {
         self.position =
             self.position + self.forward * forward + self.right() * right + self.up * up;
