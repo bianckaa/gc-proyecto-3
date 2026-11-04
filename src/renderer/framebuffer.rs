@@ -68,6 +68,18 @@ impl Framebuffer {
         self.pixels[start..start + BYTES_PER_PIXEL]
             .copy_from_slice(&[color.r, color.g, color.b, 255]);
     }
+
+    pub fn get_pixel(&self, x: i32, y: i32) -> Color {
+        if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
+            return Color::BLACK;
+        }
+        let start = (y as usize * self.width + x as usize) * BYTES_PER_PIXEL;
+        Color::new(
+            self.pixels[start],
+            self.pixels[start + 1],
+            self.pixels[start + 2],
+        )
+    }
 }
 
 impl Default for Framebuffer {

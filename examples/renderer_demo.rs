@@ -2,6 +2,7 @@ use gc_proyecto_3::engine::camera::Camera;
 use gc_proyecto_3::engine::math::{Mat4, Vec2, Vec3};
 use gc_proyecto_3::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use gc_proyecto_3::renderer::lighting::PointLight;
+use gc_proyecto_3::renderer::obj::load_normalized;
 use gc_proyecto_3::renderer::shaders::ShaderKind;
 use gc_proyecto_3::renderer::{
     Deformation, LodGroup, Material, Mesh, RenderObject, Renderer, Vertex,
@@ -20,6 +21,10 @@ const FIELD_SEED: u32 = 4242;
 const FIELD_INNER_RADIUS: f32 = 14.0;
 const FIELD_WIDTH: f32 = 28.0;
 const FIELD_HEIGHT: f32 = 12.0;
+const ETA_OBJ: &str = include_str!("../assets/models/ETA_2.obj");
+const ENEMY_OBJ: &str = include_str!("../assets/models/ENEMY1.obj");
+const PLAYER_MODEL_SCALE: f32 = 1.45;
+const MODEL_FORWARD_CORRECTION: f32 = PI;
 
 const CRUISE_SPEED: f32 = 5.0;
 const BOOST_SPEED: f32 = 10.0;
@@ -39,7 +44,8 @@ const LASER_LENGTH: f32 = 3.0;
 const LASER_LIFETIME: f32 = 1.2;
 const LASER_INTERVAL: f32 = 1.5;
 
-const SHIP_COLOR: Vec3 = Vec3::new(0.36, 1.0, 0.36);
+const PLAYER_COLOR: Vec3 = Vec3::new(0.96, 0.66, 0.08);
+const ENEMY_COLOR: Vec3 = Vec3::new(0.46, 0.11, 0.68);
 const SAND_COLOR: Vec3 = Vec3::new(0.85, 0.76, 0.6);
 const CRYSTAL_COLOR: Vec3 = Vec3::new(0.75, 0.31, 1.0);
 const ORBIT_COLOR: Color = Color::new(192, 80, 255);
@@ -68,6 +74,14 @@ struct FieldObject {
     position: Vec3,
     scale: Vec3,
     spin_speed: f32,
+}
+
+struct Enemy {
+    orbit_radius: f32,
+    orbit_speed: f32,
+    start_angle: f32,
+    height: f32,
+    scale: f32,
 }
 
 struct Laser {
@@ -107,7 +121,10 @@ struct Random {
 
 impl Random {
     fn next(&mut self) -> f32 {
-        self.state = self.state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.state = self
+            .state
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
         (self.state >> 8) as f32 / (1u32 << 24) as f32
     }
 }
@@ -141,19 +158,6 @@ fn bipyramid_mesh(front: Vec3, back: Vec3, ring: [Vec3; 4]) -> Mesh {
     mesh
 }
 
-fn ship_mesh() -> Mesh {
-    bipyramid_mesh(
-        Vec3::new(0.0, 0.0, -1.5),
-        Vec3::new(0.0, 0.0, 0.5),
-        [
-            Vec3::new(1.4, 0.0, 0.0),
-            Vec3::new(0.0, 0.3, 0.0),
-            Vec3::new(-1.4, 0.0, 0.0),
-            Vec3::new(0.0, -0.15, 0.0),
-        ],
-    )
-}
-
 fn crystal_mesh() -> Mesh {
     bipyramid_mesh(
         Vec3::new(0.0, 0.0, -1.6),
@@ -165,6 +169,46 @@ fn crystal_mesh() -> Mesh {
             Vec3::new(0.0, -0.2, 0.0),
         ],
     )
+}
+
+fn enemies() -> [Enemy; 5] {
+    [
+        Enemy {
+            orbit_radius: 17.0,
+            orbit_speed: 0.16,
+            start_angle: PI * 0.5,
+            height: 1.4,
+            scale: 1.15,
+        },
+        Enemy {
+            orbit_radius: 20.0,
+            orbit_speed: 0.11,
+            start_angle: 0.25,
+            height: -1.8,
+            scale: 1.05,
+        },
+        Enemy {
+            orbit_radius: 22.5,
+            orbit_speed: 0.13,
+            start_angle: 2.55,
+            height: 3.0,
+            scale: 1.25,
+        },
+        Enemy {
+            orbit_radius: 25.0,
+            orbit_speed: 0.09,
+            start_angle: 4.10,
+            height: -3.2,
+            scale: 1.10,
+        },
+        Enemy {
+            orbit_radius: 28.0,
+            orbit_speed: 0.07,
+            start_angle: 5.35,
+            height: 0.6,
+            scale: 1.30,
+        },
+    ]
 }
 
 fn material(base_color: Vec3, shader: ShaderKind) -> Material {
@@ -265,7 +309,9 @@ fn main() {
         mesh.deform(&ROCK_DEFORMATION);
         mesh
     });
-    let ship_model = ship_mesh();
+    let ship_model = load_normalized(ETA_OBJ).expect("no se pudo cargar assets/models/ETA_2.obj");
+    let enemy_model =
+        load_normalized(ENEMY_OBJ).expect("no se pudo cargar assets/models/ENEMY1.obj");
     let crystal = crystal_mesh();
 
     let planets = planets();
@@ -275,11 +321,13 @@ fn main() {
     };
     let asteroid_material = material(SAND_COLOR, ShaderKind::Rocky);
     let crystal_material = material(CRYSTAL_COLOR, ShaderKind::Lambert);
-    let ship_material = material(SHIP_COLOR, ShaderKind::Lambert);
+    let ship_material = material(PLAYER_COLOR, ShaderKind::EtaPlayer);
+    let enemy_material = material(ENEMY_COLOR, ShaderKind::EnemyShip);
 
     let mut random = Random { state: FIELD_SEED };
     let asteroids = scatter(&mut random, ASTEROID_COUNT, 0.3, 2.2);
     let crystals = scatter(&mut random, CRYSTAL_COUNT, 0.7, 0.6);
+    let enemies = enemies();
 
     let mut ship = Ship {
         position: Vec3::new(0.0, 2.5, 30.0),
@@ -384,9 +432,15 @@ fn main() {
             RenderObject {
                 mesh: &ship_model,
                 lod: None,
-                model_matrix: ship.model_matrix(),
+                model_matrix: ship.model_matrix()
+                    * Mat4::rotation_y(MODEL_FORWARD_CORRECTION)
+                    * Mat4::scale(Vec3::new(
+                        PLAYER_MODEL_SCALE,
+                        PLAYER_MODEL_SCALE,
+                        PLAYER_MODEL_SCALE,
+                    )),
                 material: ship_material,
-                bounding_radius: 1.6,
+                bounding_radius: PLAYER_MODEL_SCALE,
             },
         ];
         for planet in &planets {
@@ -424,6 +478,22 @@ fn main() {
                     * Mat4::scale(piece.scale),
                 material: crystal_material,
                 bounding_radius: piece.scale.x * 1.7,
+            });
+        }
+        for enemy in &enemies {
+            let angle = enemy.start_angle - time * enemy.orbit_speed;
+            let position =
+                orbit_point(enemy.orbit_radius, angle) + Vec3::new(0.0, enemy.height, 0.0);
+            let scale = Vec3::new(enemy.scale, enemy.scale, enemy.scale);
+            objects.push(RenderObject {
+                mesh: &enemy_model,
+                lod: None,
+                model_matrix: Mat4::translation(position)
+                    * Mat4::rotation_y(-angle)
+                    * Mat4::rotation_y(MODEL_FORWARD_CORRECTION)
+                    * Mat4::scale(scale),
+                material: enemy_material,
+                bounding_radius: enemy.scale,
             });
         }
 

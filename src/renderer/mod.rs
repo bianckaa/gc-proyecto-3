@@ -3,8 +3,10 @@ pub mod culling;
 pub mod depth;
 pub mod dithering;
 pub mod framebuffer;
+pub mod heat_haze;
 pub mod lighting;
 pub mod lines;
+pub mod obj;
 pub mod outline;
 pub mod pipeline;
 pub mod rasterizer;
@@ -17,10 +19,12 @@ use crate::engine::math::{Mat4, Vec2, Vec3};
 use crate::debug::metrics::Metrics;
 use culling::Frustum;
 use depth::DepthBuffer;
-use dithering::dither;
+use dithering::{dither, screen_door_visible};
 use framebuffer::{Color, Framebuffer};
+use heat_haze::HeatHaze;
 use lighting::PointLight;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
+use rasterizer::FragmentOutput;
 use shaders::{fbm, shade, ShadeInput, ShaderKind};
 use skybox::{SeededRandom, Skybox};
 use std::collections::HashMap;
@@ -35,6 +39,7 @@ const LOD_HIGH_DISTANCE: f32 = 12.0;
 const LOD_MEDIUM_DISTANCE: f32 = 40.0;
 const CRATER_RIM_END: f32 = 1.4;
 const CRATER_RIM_HEIGHT: f32 = 0.3;
+const GAS_PLANET_OPACITY: f32 = 0.76;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vertex {
@@ -99,6 +104,7 @@ struct QueuedLine {
 pub struct Renderer {
     pub light: PointLight,
     pub dithering_enabled: bool,
+    pub heat_haze_enabled: bool,
     pub outline_enabled: bool,
     pub culling_enabled: bool,
     pub lod_enabled: bool,
@@ -108,6 +114,7 @@ pub struct Renderer {
     depth_buffer: DepthBuffer,
     object_buffer: ObjectBuffer,
     outline_pixels: Vec<OutlinePixel>,
+    heat_haze: HeatHaze,
     skybox: Skybox,
     queued_lines: Vec<QueuedLine>,
 }
@@ -117,6 +124,7 @@ impl Renderer {
         Self {
             light: PointLight::new(Vec3::default(), DEFAULT_AMBIENT),
             dithering_enabled: true,
+            heat_haze_enabled: false,
             outline_enabled: true,
             culling_enabled: true,
             lod_enabled: true,
@@ -126,6 +134,7 @@ impl Renderer {
             depth_buffer: DepthBuffer::new(),
             object_buffer: ObjectBuffer::new(),
             outline_pixels: Vec::new(),
+            heat_haze: HeatHaze::new(),
             skybox: Skybox::new(STAR_SEED, STAR_COUNT),
             queued_lines: Vec::new(),
         }
@@ -173,6 +182,12 @@ impl Renderer {
                 object.model_matrix,
                 view_projection,
                 |fragment| {
+                    if dithering_enabled
+                        && material.shader == ShaderKind::GasPlanet
+                        && !screen_door_visible(GAS_PLANET_OPACITY, fragment.x, fragment.y)
+                    {
+                        return None;
+                    }
                     object_buffer.set(fragment.x, fragment.y, object_id);
                     let surface = shade(&ShadeInput {
                         fragment,
@@ -180,10 +195,28 @@ impl Renderer {
                         light: &light,
                         time,
                     });
-                    if dithering_enabled {
-                        dither(surface, fragment.x, fragment.y)
+                    if material.shader == ShaderKind::GasPlanet {
+                        let color = Color::from_unit(
+                            surface.color * (0.72 + surface.intensity * 0.28),
+                        );
+                        if dithering_enabled {
+                            Some(FragmentOutput::opaque(color))
+                        } else {
+                            Some(FragmentOutput {
+                                color,
+                                opacity: GAS_PLANET_OPACITY,
+                            })
+                        }
+                    } else if dithering_enabled {
+                        Some(FragmentOutput::opaque(dither(
+                            surface,
+                            fragment.x,
+                            fragment.y,
+                        )))
                     } else {
-                        Color::from_unit(surface.color * surface.intensity)
+                        Some(FragmentOutput::opaque(Color::from_unit(
+                            surface.color * surface.intensity,
+                        )))
                     }
                 },
             );
@@ -192,6 +225,11 @@ impl Renderer {
         }
         self.metrics
             .record_frame(processed_triangles, drawn_triangles, culled_objects);
+
+        if self.heat_haze_enabled {
+            self.heat_haze
+                .apply(&mut self.framebuffer, &self.object_buffer, objects, time);
+        }
 
         if self.outline_enabled {
             self.draw_outlines(objects, camera);

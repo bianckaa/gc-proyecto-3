@@ -23,6 +23,14 @@ impl DepthBuffer {
         self.depths[y as usize * self.width + x as usize]
     }
 
+    pub fn is_closer(&self, x: i32, y: i32, depth: f32) -> bool {
+        x >= 0
+            && y >= 0
+            && (x as usize) < self.width
+            && (y as usize) < self.height
+            && depth < self.depth_at(x, y)
+    }
+
     pub fn test_and_set(&mut self, x: i32, y: i32, depth: f32) -> bool {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return false;

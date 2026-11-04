@@ -35,6 +35,33 @@ pub struct Fragment {
     pub uv: Vec2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FragmentOutput {
+    pub color: Color,
+    pub opacity: f32,
+}
+
+impl FragmentOutput {
+    pub const fn opaque(color: Color) -> Self {
+        Self {
+            color,
+            opacity: 1.0,
+        }
+    }
+}
+
+fn blend(background: Color, foreground: Color, opacity: f32) -> Color {
+    let opacity = opacity.clamp(0.0, 1.0);
+    let channel = |background: u8, foreground: u8| {
+        (background as f32 + (foreground as f32 - background as f32) * opacity) as u8
+    };
+    Color::new(
+        channel(background.r, foreground.r),
+        channel(background.g, foreground.g),
+        channel(background.b, foreground.b),
+    )
+}
+
 fn edge(a: ScreenVertex, b: ScreenVertex, px: f32, py: f32) -> f32 {
     (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
 }
@@ -93,14 +120,14 @@ pub fn fill_shaded_triangle(
     framebuffer: &mut Framebuffer,
     depth_buffer: &mut DepthBuffer,
     vertices: [ShadedVertex; 3],
-    mut shade: impl FnMut(&Fragment) -> Color,
+    mut shade: impl FnMut(&Fragment) -> Option<FragmentOutput>,
 ) {
     let [a, b, c] = vertices;
     let (width, height) = (framebuffer.width(), framebuffer.height());
     for_each_covered_pixel(width, height, a.screen, b.screen, c.screen, |x, y, weights| {
         let [wa, wb, wc] = weights;
         let depth = wa * a.screen.depth + wb * b.screen.depth + wc * c.screen.depth;
-        if !depth_buffer.test_and_set(x, y, depth) {
+        if !depth_buffer.is_closer(x, y, depth) {
             return;
         }
         let pa = wa * a.inverse_w;
@@ -116,7 +143,15 @@ pub fn fill_shaded_triangle(
             normal: (a.normal * pa + b.normal * pb + c.normal * pc).normalize(),
             uv: a.uv * pa + b.uv * pb + c.uv * pc,
         };
-        framebuffer.set_pixel(x, y, shade(&fragment));
+        if let Some(output) = shade(&fragment) {
+            let color = if output.opacity < 1.0 {
+                blend(framebuffer.get_pixel(x, y), output.color, output.opacity)
+            } else {
+                output.color
+            };
+            depth_buffer.test_and_set(x, y, depth);
+            framebuffer.set_pixel(x, y, color);
+        }
     });
 }
 
@@ -157,7 +192,7 @@ mod tests {
         let mut sampled = Vec::new();
         fill_shaded_triangle(&mut framebuffer, &mut depth_buffer, vertices, |fragment| {
             sampled.push(*fragment);
-            Color::BLACK
+            Some(FragmentOutput::opaque(Color::BLACK))
         });
         let expected = 0.0505 / 0.5455;
         assert!((sampled[50].uv.x - expected).abs() < 0.001);
@@ -187,5 +222,28 @@ mod tests {
         fill_triangle(&mut framebuffer, &mut depth_buffer, a, c, b, white);
         assert_eq!(pixel_at(&framebuffer, 20, 20), &[255, 255, 255]);
         assert_eq!(pixel_at(&framebuffer, 90, 90), &[0, 0, 0]);
+    }
+
+    #[test]
+    fn discarded_fragments_leave_color_and_depth_untouched() {
+        let vertices = triangle_at(0.5).map(|screen| ShadedVertex {
+            screen,
+            inverse_w: 1.0,
+            local_position: Vec3::default(),
+            world_position: Vec3::default(),
+            normal: Vec3::new(0.0, 1.0, 0.0),
+            uv: Vec2::default(),
+        });
+        let mut framebuffer = Framebuffer::new();
+        let mut depth_buffer = DepthBuffer::new();
+        fill_shaded_triangle(&mut framebuffer, &mut depth_buffer, vertices, |_| None);
+        assert_eq!(pixel_at(&framebuffer, 20, 20), &[0, 0, 0]);
+        assert!(depth_buffer.depth_at(20, 20).is_infinite());
+    }
+
+    #[test]
+    fn alpha_blending_combines_foreground_with_existing_color() {
+        let blended = blend(Color::new(20, 40, 60), Color::new(220, 140, 100), 0.5);
+        assert_eq!(blended, Color::new(120, 90, 80));
     }
 }

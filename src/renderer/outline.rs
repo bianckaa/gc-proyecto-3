@@ -45,7 +45,7 @@ impl ObjectBuffer {
         }
     }
 
-    fn get(&self, x: i32, y: i32) -> u32 {
+    pub(crate) fn get(&self, x: i32, y: i32) -> u32 {
         self.ids[y as usize * FRAMEBUFFER_WIDTH + x as usize]
     }
 }
