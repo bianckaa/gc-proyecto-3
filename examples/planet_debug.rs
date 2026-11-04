@@ -1,6 +1,7 @@
 use gc_proyecto_3::engine::camera::Camera;
 use gc_proyecto_3::engine::math::{Mat4, Vec3};
 use gc_proyecto_3::renderer::framebuffer::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
+use gc_proyecto_3::renderer::lighting::PointLight;
 use gc_proyecto_3::renderer::obj::load_normalized;
 use gc_proyecto_3::renderer::shaders::ShaderKind;
 use gc_proyecto_3::renderer::{Material, RenderObject, Renderer};
@@ -16,6 +17,14 @@ const ORBIT_SENSITIVITY: f32 = 0.008;
 const ZOOM_STEP: f32 = 0.6;
 const MAX_ORBIT_PITCH: f32 = 1.35;
 const PLANET_OBJ: &str = include_str!("../assets/models/Planet.obj");
+const CORE_OBJ: &str = include_str!("../assets/models/CORE_.obj");
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanetSelection {
+    Sun,
+    Core,
+    Rocky,
+}
 
 fn orbit_position(yaw: f32, pitch: f32, distance: f32) -> Vec3 {
     let horizontal = pitch.cos() * distance;
@@ -35,7 +44,7 @@ fn main() {
             FRAMEBUFFER_WIDTH as i32 * WINDOW_SCALE,
             FRAMEBUFFER_HEIGHT as i32 * WINDOW_SCALE,
         )
-        .title("Planet debug - Sol")
+        .title("Planet debug")
         .build();
     rl.set_target_fps(60);
 
@@ -50,10 +59,25 @@ fn main() {
     texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
     let sun = load_normalized(PLANET_OBJ).expect("no se pudo cargar assets/models/Planet.obj");
-    let material = Material {
+    let mut rocky = sun.clone();
+    let rocky_bounding_radius = rocky.deform_rocky_planet();
+    let core = load_normalized(CORE_OBJ).expect("no se pudo cargar assets/models/CORE_.obj");
+    let sun_material = Material {
         base_color: Vec3::new(1.0, 0.19, 0.015),
         emissive: Vec3::new(0.08, 0.025, 0.0),
         shader: ShaderKind::Sun,
+        outline: true,
+    };
+    let core_material = Material {
+        base_color: Vec3::new(0.38, 0.48, 0.54),
+        emissive: Vec3::new(0.01, 0.025, 0.03),
+        shader: ShaderKind::CorePlanet,
+        outline: true,
+    };
+    let rocky_material = Material {
+        base_color: Vec3::new(0.40, 0.18, 0.07),
+        emissive: Vec3::default(),
+        shader: ShaderKind::RockyPlanet,
         outline: true,
     };
     let mut camera = Camera::new(
@@ -61,7 +85,6 @@ fn main() {
         FRAMEBUFFER_WIDTH as f32 / FRAMEBUFFER_HEIGHT as f32,
     );
     let mut renderer = Renderer::new();
-    renderer.heat_haze_enabled = true;
     renderer.culling_enabled = false;
     renderer.lod_enabled = false;
 
@@ -71,6 +94,9 @@ fn main() {
     let mut orbit_yaw = 0.0_f32;
     let mut orbit_pitch = 0.0_f32;
     let mut camera_distance = INITIAL_CAMERA_DISTANCE;
+    let mut selection = PlanetSelection::Rocky;
+    let mut sun_heat_haze = true;
+    let mut rocky_deformation = true;
     let mut rendered_frames = 0_u32;
 
     while !rl.window_should_close() {
@@ -89,7 +115,19 @@ fn main() {
             renderer.outline_enabled = !renderer.outline_enabled;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_H) {
-            renderer.heat_haze_enabled = !renderer.heat_haze_enabled;
+            sun_heat_haze = !sun_heat_haze;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
+            selection = PlanetSelection::Sun;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_TWO) {
+            selection = PlanetSelection::Core;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
+            selection = PlanetSelection::Rocky;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_V) {
+            rocky_deformation = !rocky_deformation;
         }
         if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
             let mouse_delta = rl.get_mouse_delta();
@@ -106,15 +144,25 @@ fn main() {
         }
         camera.position = orbit_position(orbit_yaw, orbit_pitch, camera_distance);
         camera.look_at(Vec3::default());
+        renderer.light = PointLight::new(camera.position, 0.20);
+        renderer.heat_haze_enabled = selection == PlanetSelection::Sun && sun_heat_haze;
 
         let model_matrix = Mat4::rotation_x(-0.16)
             * Mat4::rotation_y(rotation)
             * Mat4::scale(Vec3::new(SUN_RADIUS, SUN_RADIUS, SUN_RADIUS));
+        let (mesh, material, mesh_radius) = match selection {
+            PlanetSelection::Sun => (&sun, sun_material, 1.0),
+            PlanetSelection::Core => (&core, core_material, 1.0),
+            PlanetSelection::Rocky if rocky_deformation => {
+                (&rocky, rocky_material, rocky_bounding_radius)
+            }
+            PlanetSelection::Rocky => (&sun, rocky_material, 1.0),
+        };
         let objects = [RenderObject {
-            mesh: &sun,
+            mesh,
             model_matrix,
             material,
-            bounding_radius: SUN_RADIUS,
+            bounding_radius: SUN_RADIUS * mesh_radius,
             lod: None,
         }];
         renderer.render(&objects, &camera, effect_time);

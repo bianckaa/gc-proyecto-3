@@ -1,10 +1,15 @@
 use super::lighting::PointLight;
 use super::rasterizer::Fragment;
 use super::Material;
-use crate::engine::math::Vec3;
+use crate::engine::math::{Vec2, Vec3};
 
 const FBM_OCTAVES: u32 = 4;
 const SUN_MAX_DITHER_INTENSITY: f32 = 0.86;
+pub(crate) const ROCKY_CRATERS: [(Vec3, f32); 3] = [
+    (Vec3::new(0.72, 0.32, 0.61), 0.25),
+    (Vec3::new(-0.46, 0.70, 0.55), 0.20),
+    (Vec3::new(0.24, -0.66, 0.71), 0.23),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Surface {
@@ -181,10 +186,179 @@ fn shade_rocky(input: &ShadeInput) -> Surface {
     }
 }
 
+fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
+    let t = ((value - edge_start) / (edge_end - edge_start)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+pub(crate) fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
+    let continental = fbm(direction * 2.15 + Vec3::new(3.7, -1.4, 2.2));
+    let warp = Vec3::new(
+        fbm(direction * 1.7 + Vec3::new(9.0, 0.0, 0.0)),
+        fbm(direction * 1.7 + Vec3::new(0.0, 9.0, 0.0)),
+        fbm(direction * 1.7 + Vec3::new(0.0, 0.0, 9.0)),
+    );
+    let mountain_field = fbm(direction * 7.0 + warp * 2.3);
+    let ridge = (1.0 - (mountain_field * 2.0 - 1.0).abs())
+        .clamp(0.0, 1.0)
+        .powi(3);
+    let land = smoothstep(0.36, 0.68, continental);
+    let mountains = ridge * land;
+    let grit = value_noise(direction * 42.0 + Vec3::new(4.0, 7.0, 2.0));
+    let height = (continental * 0.42 + mountains * 0.58 + (grit - 0.5) * 0.08)
+        .clamp(0.0, 1.0);
+    (height, mountains, grit)
+}
+
+fn crater_field(direction: Vec3, center: Vec3, radius: f32) -> (f32, f32) {
+    let distance = (direction - center.normalize()).length();
+    let bowl = (1.0 - distance / radius).clamp(0.0, 1.0);
+    let rim = (1.0 - (distance - radius).abs() / (radius * 0.18)).clamp(0.0, 1.0);
+    (bowl * bowl, rim * rim)
+}
+
+pub(crate) fn rocky_geometry_displacement(direction: Vec3) -> f32 {
+    let (height, mountains, _) = rocky_height(direction);
+    let terrain = (height - 0.48) * 0.14 + mountains * 0.10;
+    let (bowl, rim) = ROCKY_CRATERS
+        .iter()
+        .map(|&(center, radius)| crater_field(direction, center, radius))
+        .fold((0.0_f32, 0.0_f32), |(max_bowl, max_rim), (bowl, rim)| {
+            (max_bowl.max(bowl), max_rim.max(rim))
+        });
+    (terrain - bowl * 0.22 + rim * 0.045).clamp(-0.24, 0.17)
+}
+
+fn shade_rocky_planet(input: &ShadeInput) -> Surface {
+    let direction = input.fragment.local_position.normalize();
+    let (height, mountains, grit) = rocky_height(direction);
+
+    // Capa 1: valles oscuros y tierras minerales de baja altura.
+    let valley = Vec3::new(0.10, 0.045, 0.025);
+    let lowland = input.material.base_color;
+    let mut color = mix(valley, lowland, smoothstep(0.22, 0.52, height));
+
+    // Capa 2: cordilleras rocosas formadas por crestas de FBM.
+    let mountain_rock = Vec3::new(0.58, 0.42, 0.27);
+    color = mix(color, mountain_rock, smoothstep(0.22, 0.72, mountains));
+
+    // Capa 3: cumbres claras y granulado mineral de alta frecuencia.
+    let peak = Vec3::new(0.84, 0.80, 0.70);
+    let peak_mask = smoothstep(0.68, 0.90, height) * smoothstep(0.28, 0.72, mountains);
+    color = mix(color, peak, peak_mask);
+    color = color * (0.88 + grit * 0.22);
+
+    // Capa 4: tres crateres con cuencas oscuras y bordes elevados.
+    let craters = ROCKY_CRATERS.map(|(center, radius)| crater_field(direction, center, radius));
+    let bowl = craters
+        .iter()
+        .map(|(bowl, _)| *bowl)
+        .fold(0.0_f32, f32::max);
+    let rim = craters
+        .iter()
+        .map(|(_, rim)| *rim)
+        .fold(0.0_f32, f32::max);
+    color = mix(color, valley * 0.65, bowl * 0.90);
+    color = mix(color, peak, rim * 0.72);
+
+    // Capa 5: contraste de relieve que simula sombras entre montanas cercanas.
+    let relief_offset = Vec3::new(0.035, 0.052, -0.028);
+    let neighbor_height = rocky_height((direction + relief_offset).normalize()).0;
+    let relief_light = (0.72 + (height - neighbor_height) * 8.0).clamp(0.32, 1.18);
+    let light = lit_intensity(input);
+    let intensity = (light * (0.32 + relief_light * 0.62) + rim * 0.16).clamp(0.14, 0.86);
+
+    Surface { color, intensity }
+}
+
+fn core_projection(point: Vec3) -> Vec2 {
+    let direction = point.normalize();
+    let (ax, ay, az) = (direction.x.abs(), direction.y.abs(), direction.z.abs());
+    if ax >= ay && ax >= az {
+        Vec2::new(direction.z, direction.y)
+    } else if ay >= az {
+        Vec2::new(direction.x, direction.z)
+    } else {
+        Vec2::new(direction.x, direction.y)
+    }
+}
+
+fn panel_sample(uv: Vec2, columns: f32, rows: f32, seed: i32) -> (f32, f32, Vec2) {
+    let scaled = Vec2::new(uv.x * columns, uv.y * rows);
+    let cell_x = scaled.x.floor() as i32;
+    let cell_y = scaled.y.floor() as i32;
+    let local = Vec2::new(scaled.x.rem_euclid(1.0), scaled.y.rem_euclid(1.0));
+    let value = hash(cell_x, cell_y, seed);
+    let edge = local
+        .x
+        .min(1.0 - local.x)
+        .min(local.y.min(1.0 - local.y));
+    (value, edge, local)
+}
+
+fn shade_core_planet(input: &ShadeInput) -> Surface {
+    let uv = core_projection(input.fragment.local_position);
+
+    // Capa 1: grandes placas con alturas visuales distintas.
+    let (macro_panel, macro_edge, _) = panel_sample(uv, 3.5, 2.5, 17);
+
+    // Capa 2: bloques medianos superpuestos para romper la cuadricula principal.
+    let offset_uv = Vec2::new(uv.x + 0.19, uv.y - 0.13);
+    let (medium_panel, medium_edge, medium_local) = panel_sample(offset_uv, 9.0, 6.0, 43);
+
+    // Capa 3: juntas oscuras y conductos finos similares a un circuito urbano.
+    let macro_seam = (1.0 - macro_edge * 32.0).clamp(0.0, 1.0);
+    let medium_seam = (1.0 - medium_edge * 46.0).clamp(0.0, 1.0);
+    let horizontal_conduit = if medium_panel > 0.58 {
+        (1.0 - (medium_local.y - 0.68).abs() * 55.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let vertical_conduit = if medium_panel < 0.28 {
+        (1.0 - (medium_local.x - 0.34).abs() * 55.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let conduit = horizontal_conduit.max(vertical_conduit);
+
+    // Capa 4: modulos pequenos y puntos de energia repartidos por la superficie.
+    let (module_cell, _, module_local) = panel_sample(uv, 22.0, 16.0, 91);
+    let module_shape = if module_cell > 0.78
+        && (module_local.x - 0.5).abs() < 0.24
+        && (module_local.y - 0.5).abs() < 0.20
+    {
+        1.0
+    } else {
+        0.0
+    };
+    let energy = (conduit * 0.75 + module_shape).min(1.0);
+
+    let relief = (macro_panel * 0.48 + medium_panel * 0.34 + module_shape * 0.18)
+        * (1.0 - macro_seam * 0.65)
+        * (1.0 - medium_seam * 0.45);
+    let dark_metal = input.material.base_color * 0.16;
+    let pale_metal = Vec3::new(0.72, 0.79, 0.82);
+    let panel_color = mix(dark_metal, pale_metal, 0.18 + relief * 0.82);
+    let seam_color = input.material.base_color * 0.08;
+    let with_seams = mix(
+        panel_color,
+        seam_color,
+        (macro_seam * 0.82 + medium_seam * 0.55).min(1.0),
+    );
+    let energy_color = Vec3::new(0.28, 0.96, 1.0);
+    let color = mix(with_seams, energy_color, energy * 0.88);
+    let light = lit_intensity(input);
+    let intensity = (light * (0.30 + relief * 0.78) + energy * 0.38).clamp(0.16, 0.88);
+
+    Surface { color, intensity }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderKind {
+    CorePlanet,
     Lambert,
     Rocky,
+    RockyPlanet,
     Lava,
     Toon,
     GasGiant,
@@ -193,8 +367,10 @@ pub enum ShaderKind {
 
 pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
+        ShaderKind::CorePlanet => shade_core_planet(input),
         ShaderKind::Lambert => shade_lambert(input),
         ShaderKind::Rocky => shade_rocky(input),
+        ShaderKind::RockyPlanet => shade_rocky_planet(input),
         ShaderKind::Lava => shade_lava(input),
         ShaderKind::Toon => shade_toon(input),
         ShaderKind::GasGiant => shade_gas_giant(input),
