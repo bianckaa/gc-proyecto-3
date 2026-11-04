@@ -16,6 +16,10 @@ pub(crate) fn threshold(x: i32, y: i32) -> f32 {
     (BAYER_MATRIX[row][column] as f32 + 0.5) / BAYER_LEVELS
 }
 
+pub fn screen_door_visible(opacity: f32, x: i32, y: i32) -> bool {
+    opacity > threshold(x + 2, y + 1)
+}
+
 pub fn dither(surface: Surface, x: i32, y: i32) -> Color {
     if surface.intensity > threshold(x, y) {
         Color::from_unit(surface.color)
@@ -45,5 +49,14 @@ mod tests {
         assert_eq!(lit_pixels(0.0), 0);
         assert_eq!(lit_pixels(0.5), 8);
         assert_eq!(lit_pixels(1.0), 16);
+    }
+
+    #[test]
+    fn screen_door_transparency_preserves_half_the_background() {
+        let visible = (0..4)
+            .flat_map(|y| (0..4).map(move |x| (x, y)))
+            .filter(|&(x, y)| screen_door_visible(0.5, x, y))
+            .count();
+        assert_eq!(visible, 8);
     }
 }

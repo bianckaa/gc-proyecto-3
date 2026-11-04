@@ -24,6 +24,7 @@ enum PlanetSelection {
     Sun,
     Core,
     Rocky,
+    Gas,
 }
 
 fn orbit_position(yaw: f32, pitch: f32, distance: f32) -> Vec3 {
@@ -39,6 +40,7 @@ fn main() {
     let capture_path = std::env::args()
         .skip_while(|argument| argument != "--capture")
         .nth(1);
+    let start_without_dithering = std::env::args().any(|argument| argument == "--no-dither");
     let (mut rl, thread) = raylib::init()
         .size(
             FRAMEBUFFER_WIDTH as i32 * WINDOW_SCALE,
@@ -78,11 +80,18 @@ fn main() {
         shader: ShaderKind::RockyPlanet,
         outline: true,
     };
+    let gas_material = Material {
+        base_color: Vec3::new(0.20, 0.46, 0.72),
+        emissive: Vec3::new(0.0, 0.015, 0.025),
+        shader: ShaderKind::GasPlanet,
+        outline: false,
+    };
     let mut camera = Camera::new(
         Vec3::new(0.0, 0.0, INITIAL_CAMERA_DISTANCE),
         FRAMEBUFFER_WIDTH as f32 / FRAMEBUFFER_HEIGHT as f32,
     );
     let mut renderer = Renderer::new();
+    renderer.dithering_enabled = !start_without_dithering;
     renderer.culling_enabled = false;
     renderer.lod_enabled = false;
 
@@ -92,7 +101,7 @@ fn main() {
     let mut orbit_yaw = 0.0_f32;
     let mut orbit_pitch = 0.0_f32;
     let mut camera_distance = INITIAL_CAMERA_DISTANCE;
-    let mut selection = PlanetSelection::Rocky;
+    let mut selection = PlanetSelection::Gas;
     let mut sun_heat_haze = true;
     let mut rendered_frames = 0_u32;
 
@@ -123,6 +132,9 @@ fn main() {
         if rl.is_key_pressed(KeyboardKey::KEY_THREE) {
             selection = PlanetSelection::Rocky;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
+            selection = PlanetSelection::Gas;
+        }
         if capture_path.is_none() && rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
             let mouse_delta = rl.get_mouse_delta();
             orbit_yaw -= mouse_delta.x * ORBIT_SENSITIVITY;
@@ -150,6 +162,7 @@ fn main() {
             PlanetSelection::Sun => (&sun, sun_material),
             PlanetSelection::Core => (&core, core_material),
             PlanetSelection::Rocky => (&sun, rocky_material),
+            PlanetSelection::Gas => (&sun, gas_material),
         };
         let objects = [RenderObject {
             mesh,

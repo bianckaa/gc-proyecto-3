@@ -1,9 +1,9 @@
 use super::clipping::{clip_against_near, ClipVertex};
 use super::culling::is_back_facing;
 use super::depth::DepthBuffer;
-use super::framebuffer::{Color, Framebuffer};
+use super::framebuffer::Framebuffer;
 use super::lines::to_screen;
-use super::rasterizer::{fill_shaded_triangle, Fragment, ShadedVertex};
+use super::rasterizer::{fill_shaded_triangle, Fragment, FragmentOutput, ShadedVertex};
 use super::{Mesh, Vertex};
 use crate::engine::math::Mat4;
 
@@ -41,7 +41,7 @@ pub fn draw_mesh(
     mesh: &Mesh,
     model: Mat4,
     view_projection: Mat4,
-    mut shade: impl FnMut(&Fragment) -> Color,
+    mut shade: impl FnMut(&Fragment) -> Option<FragmentOutput>,
 ) -> DrawStats {
     let width = framebuffer.width() as f32;
     let height = framebuffer.height() as f32;
