@@ -280,6 +280,17 @@ fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+fn interval_mask(value: f32, minimum: f32, maximum: f32, softness: f32) -> f32 {
+    smoothstep(minimum - softness, minimum + softness, value)
+        * (1.0 - smoothstep(maximum - softness, maximum + softness, value))
+}
+
+fn box_mask(point: Vec3, minimum: Vec3, maximum: Vec3, softness: f32) -> f32 {
+    interval_mask(point.x, minimum.x, maximum.x, softness)
+        * interval_mask(point.y, minimum.y, maximum.y, softness)
+        * interval_mask(point.z, minimum.z, maximum.z, softness)
+}
+
 fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
     let continental = value_noise(direction * 2.15 + Vec3::new(3.7, -1.4, 2.2));
     let warp = value_noise(direction * 3.1 + Vec3::new(9.0, -4.0, 2.0)) - 0.5;
@@ -569,6 +580,85 @@ fn shade_droid_planet(input: &ShadeInput) -> Surface {
     Surface { color, intensity }
 }
 
+fn shade_eta_player(input: &ShadeInput) -> Surface {
+    let point = input.fragment.local_position;
+    let uv = core_projection(point);
+    let (panel, panel_edge, panel_local) = panel_sample(uv, 13.0, 9.0, 401);
+    let seam = (1.0 - panel_edge * 48.0).clamp(0.0, 1.0);
+
+    // Carroceria amarilla con placas doradas y pequenos paneles claros.
+    let yellow = input.material.base_color;
+    let golden_shadow = Vec3::new(0.34, 0.20, 0.025);
+    let pale_metal = Vec3::new(0.82, 0.78, 0.58);
+    let dark_seam = Vec3::new(0.055, 0.045, 0.030);
+    let mut color = mix(golden_shadow, yellow, 0.58 + panel * 0.34);
+    color = mix(color, dark_seam, seam * 0.72);
+
+    let panel_detail =
+        if panel > 0.72 && (panel_local.x - 0.5).abs() < 0.30 && (panel_local.y - 0.5).abs() < 0.12
+        {
+            1.0
+        } else {
+            0.0
+        };
+    color = mix(color, pale_metal, panel_detail * 0.50);
+
+    // R2-D2 es un componente separado del OBJ; esta caja corresponde a sus
+    // limites despues de normalizar el modelo.
+    let r2 = box_mask(
+        point,
+        Vec3::new(0.175, 0.088, -0.062),
+        Vec3::new(0.355, 0.276, 0.172),
+        0.014,
+    );
+    let r2_blue = Vec3::new(0.06, 0.30, 0.92);
+    let r2_highlight = smoothstep(0.18, 0.27, point.y) * r2;
+    color = mix(color, r2_blue, r2 * 0.96);
+    color = mix(color, Vec3::new(0.78, 0.86, 0.94), r2_highlight * 0.48);
+
+    let light = lit_intensity(input);
+    let intensity =
+        (light * (0.42 + panel * 0.46) + panel_detail * 0.08 + r2 * 0.16).clamp(0.16, 0.88);
+    Surface { color, intensity }
+}
+
+fn shade_enemy_ship(input: &ShadeInput) -> Surface {
+    let uv = core_projection(input.fragment.local_position);
+    let (armor, armor_edge, armor_local) = panel_sample(uv, 9.0, 7.0, 503);
+    let (detail, detail_edge, detail_local) =
+        panel_sample(Vec2::new(uv.x + 0.13, uv.y - 0.09), 21.0, 15.0, 557);
+    let trench = (1.0 - armor_edge * 42.0)
+        .max((1.0 - detail_edge * 58.0) * 0.55)
+        .clamp(0.0, 1.0);
+
+    let purple_shadow = Vec3::new(0.075, 0.025, 0.12);
+    let purple_armor = input.material.base_color;
+    let gray_metal = Vec3::new(0.70, 0.73, 0.78);
+    let dark_metal = Vec3::new(0.035, 0.030, 0.045);
+    let mut color = mix(purple_shadow, purple_armor, 0.46 + armor * 0.48);
+    color = mix(color, dark_metal, trench * 0.82);
+
+    let gray_panel: f32 =
+        if armor > 0.63 && (armor_local.x - 0.5).abs() < 0.32 && (armor_local.y - 0.5).abs() < 0.20
+        {
+            1.0
+        } else {
+            0.0
+        };
+    let gray_module: f32 = if detail > 0.76
+        && (detail_local.x - 0.5).abs() < 0.24
+        && (detail_local.y - 0.5).abs() < 0.15
+    {
+        1.0
+    } else {
+        0.0
+    };
+    let gray_detail = gray_panel.max(gray_module);
+    color = mix(color, gray_metal, gray_detail * 0.96);
+
+    let light = lit_intensity(input);
+    let intensity =
+        (light * (0.36 + armor * 0.54) + gray_detail * 0.20 + detail * 0.04).clamp(0.14, 0.86);
     Surface { color, intensity }
 }
 
@@ -576,6 +666,8 @@ fn shade_droid_planet(input: &ShadeInput) -> Surface {
 pub enum ShaderKind {
     CorePlanet,
     DroidPlanet,
+    EnemyShip,
+    EtaPlayer,
     GasPlanet,
     Lambert,
     Rocky,
@@ -590,6 +682,8 @@ pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
         ShaderKind::CorePlanet => shade_core_planet(input),
         ShaderKind::DroidPlanet => shade_droid_planet(input),
+        ShaderKind::EnemyShip => shade_enemy_ship(input),
+        ShaderKind::EtaPlayer => shade_eta_player(input),
         ShaderKind::GasPlanet => shade_gas_planet(input),
         ShaderKind::Lambert => shade_lambert(input),
         ShaderKind::Rocky => shade_rocky(input),
