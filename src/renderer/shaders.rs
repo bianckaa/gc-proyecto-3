@@ -5,11 +5,8 @@ use crate::engine::math::{Vec2, Vec3};
 
 const FBM_OCTAVES: u32 = 4;
 const SUN_MAX_DITHER_INTENSITY: f32 = 0.86;
-pub(crate) const ROCKY_CRATERS: [(Vec3, f32); 3] = [
-    (Vec3::new(0.72, 0.32, 0.61), 0.25),
-    (Vec3::new(-0.46, 0.70, 0.55), 0.20),
-    (Vec3::new(0.24, -0.66, 0.71), 0.23),
-];
+const ROCKY_CRATER_COUNT: u32 = 18;
+const GOLDEN_ANGLE: f32 = 2.399_963_1;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Surface {
@@ -191,12 +188,12 @@ fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-pub(crate) fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
+fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
     let continental = fbm(direction * 2.15 + Vec3::new(3.7, -1.4, 2.2));
     let warp = Vec3::new(
-        fbm(direction * 1.7 + Vec3::new(9.0, 0.0, 0.0)),
-        fbm(direction * 1.7 + Vec3::new(0.0, 9.0, 0.0)),
-        fbm(direction * 1.7 + Vec3::new(0.0, 0.0, 9.0)),
+        value_noise(direction * 1.7 + Vec3::new(9.0, 0.0, 0.0)),
+        value_noise(direction * 1.7 + Vec3::new(0.0, 9.0, 0.0)),
+        value_noise(direction * 1.7 + Vec3::new(0.0, 0.0, 9.0)),
     );
     let mountain_field = fbm(direction * 7.0 + warp * 2.3);
     let ridge = (1.0 - (mountain_field * 2.0 - 1.0).abs())
@@ -210,23 +207,47 @@ pub(crate) fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
     (height, mountains, grit)
 }
 
-fn crater_field(direction: Vec3, center: Vec3, radius: f32) -> (f32, f32) {
+fn crater_field(direction: Vec3, center: Vec3, radius: f32) -> (f32, f32, f32) {
     let distance = (direction - center.normalize()).length();
     let bowl = (1.0 - distance / radius).clamp(0.0, 1.0);
     let rim = (1.0 - (distance - radius).abs() / (radius * 0.18)).clamp(0.0, 1.0);
-    (bowl * bowl, rim * rim)
+    let ejecta_radius = radius * 1.48;
+    let ejecta = (1.0 - (distance - ejecta_radius).abs() / (radius * 0.13)).clamp(0.0, 1.0);
+    (bowl * bowl, rim * rim, ejecta * ejecta)
 }
 
-pub(crate) fn rocky_geometry_displacement(direction: Vec3) -> f32 {
-    let (height, mountains, _) = rocky_height(direction);
-    let terrain = (height - 0.48) * 0.14 + mountains * 0.10;
-    let (bowl, rim) = ROCKY_CRATERS
-        .iter()
-        .map(|&(center, radius)| crater_field(direction, center, radius))
-        .fold((0.0_f32, 0.0_f32), |(max_bowl, max_rim), (bowl, rim)| {
-            (max_bowl.max(bowl), max_rim.max(rim))
-        });
-    (terrain - bowl * 0.22 + rim * 0.045).clamp(-0.24, 0.17)
+fn distributed_crater(index: u32) -> (Vec3, f32) {
+    let fraction = (index as f32 + 0.5) / ROCKY_CRATER_COUNT as f32;
+    let height = 1.0 - fraction * 2.0;
+    let ring = (1.0 - height * height).sqrt();
+    let azimuth = index as f32 * GOLDEN_ANGLE;
+    let center = Vec3::new(ring * azimuth.cos(), height, ring * azimuth.sin());
+    let variation = hash(index as i32, 31, 7);
+    let radius =
+        0.095 + variation * 0.095 + if index.is_multiple_of(6) { 0.045 } else { 0.0 };
+    (center, radius)
+}
+
+fn erosion_field(direction: Vec3, height: f32, mountains: f32) -> f32 {
+    let warp = fbm(direction * 3.4 + Vec3::new(-2.0, 5.0, 1.0));
+    let flow_point = direction * 15.0
+        + Vec3::new(warp * 3.2, height * 5.5 - warp * 1.8, -warp * 2.6);
+    let flow = fbm(flow_point);
+    let channel = (1.0 - (flow - 0.5).abs() * 24.0).clamp(0.0, 1.0);
+    channel * smoothstep(0.32, 0.76, height) * (0.35 + mountains * 0.65)
+}
+
+fn terrain_occlusion(
+    height: f32,
+    mountains: f32,
+    crater_bowl: f32,
+    erosion: f32,
+) -> f32 {
+    let valley = 1.0 - smoothstep(0.24, 0.56, height);
+    let mountain_cavity = (1.0 - smoothstep(0.08, 0.48, mountains))
+        * smoothstep(0.34, 0.66, height);
+    (valley * 0.38 + mountain_cavity * 0.16 + crater_bowl * 0.46 + erosion * 0.12)
+        .clamp(0.0, 1.0)
 }
 
 fn shade_rocky_planet(input: &ShadeInput) -> Surface {
@@ -249,24 +270,34 @@ fn shade_rocky_planet(input: &ShadeInput) -> Surface {
     color = color * (0.88 + grit * 0.22);
 
     // Capa 4: tres crateres con cuencas oscuras y bordes elevados.
-    let craters = ROCKY_CRATERS.map(|(center, radius)| crater_field(direction, center, radius));
-    let bowl = craters
-        .iter()
-        .map(|(bowl, _)| *bowl)
-        .fold(0.0_f32, f32::max);
-    let rim = craters
-        .iter()
-        .map(|(_, rim)| *rim)
-        .fold(0.0_f32, f32::max);
+    let (mut bowl, mut rim, mut ejecta) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for index in 0..ROCKY_CRATER_COUNT {
+        let (center, radius) = distributed_crater(index);
+        let (sample_bowl, sample_rim, sample_ejecta) = crater_field(direction, center, radius);
+        bowl = bowl.max(sample_bowl);
+        rim = rim.max(sample_rim);
+        ejecta = ejecta.max(sample_ejecta);
+    }
     color = mix(color, valley * 0.65, bowl * 0.90);
     color = mix(color, peak, rim * 0.72);
+    color = mix(color, mountain_rock, ejecta * 0.38);
 
-    // Capa 5: contraste de relieve que simula sombras entre montanas cercanas.
-    let relief_offset = Vec3::new(0.035, 0.052, -0.028);
-    let neighbor_height = rocky_height((direction + relief_offset).normalize()).0;
-    let relief_light = (0.72 + (height - neighbor_height) * 8.0).clamp(0.32, 1.18);
+    // Capa 5: canales de erosion estrechos que atraviesan laderas y cordilleras.
+    let erosion = erosion_field(direction, height, mountains);
+    color = mix(color, valley * 0.52, erosion * 0.64);
+
+    // Capa 6: oclusion procedural para hundir visualmente valles y crateres.
+    let occlusion = terrain_occlusion(height, mountains, bowl, erosion);
+    color = color * (1.0 - occlusion * 0.32);
+
+    // Capa 7: relieve aproximado reutilizando montanas y detalle ya calculados.
+    let relief_light =
+        (0.66 + mountains * 0.38 + (grit - 0.5) * 0.22 - erosion * 0.10).clamp(0.42, 1.08);
     let light = lit_intensity(input);
-    let intensity = (light * (0.32 + relief_light * 0.62) + rim * 0.16).clamp(0.14, 0.86);
+    let intensity = ((light * (0.32 + relief_light * 0.62) + rim * 0.16 + ejecta * 0.05)
+        * (1.0 - occlusion * 0.28)
+        * (1.0 - erosion * 0.12))
+        .clamp(0.12, 0.86);
 
     Surface { color, intensity }
 }
