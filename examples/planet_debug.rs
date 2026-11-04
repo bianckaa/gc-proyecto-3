@@ -12,12 +12,14 @@ const SUN_RADIUS: f32 = 1.75;
 const ROTATION_SPEED: f32 = 0.24;
 const INITIAL_CAMERA_DISTANCE: f32 = 6.2;
 const MIN_CAMERA_DISTANCE: f32 = 3.4;
+const ROCKY_MIN_CAMERA_DISTANCE: f32 = 4.6;
 const MAX_CAMERA_DISTANCE: f32 = 12.0;
 const ORBIT_SENSITIVITY: f32 = 0.008;
 const ZOOM_STEP: f32 = 0.6;
 const MAX_ORBIT_PITCH: f32 = 1.35;
 const PLANET_OBJ: &str = include_str!("../assets/models/Planet.obj");
 const CORE_OBJ: &str = include_str!("../assets/models/CORE_.obj");
+const DROID_OBJ: &str = include_str!("../assets/models/Droid_confed.obj");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PlanetSelection {
@@ -25,6 +27,7 @@ enum PlanetSelection {
     Core,
     Rocky,
     Gas,
+    Droid,
 }
 
 fn orbit_position(yaw: f32, pitch: f32, distance: f32) -> Vec3 {
@@ -62,6 +65,8 @@ fn main() {
 
     let sun = load_normalized(PLANET_OBJ).expect("no se pudo cargar assets/models/Planet.obj");
     let core = load_normalized(CORE_OBJ).expect("no se pudo cargar assets/models/CORE_.obj");
+    let droid =
+        load_normalized(DROID_OBJ).expect("no se pudo cargar assets/models/Droid_confed.obj");
     let sun_material = Material {
         base_color: Vec3::new(1.0, 0.19, 0.015),
         emissive: Vec3::new(0.08, 0.025, 0.0),
@@ -86,6 +91,12 @@ fn main() {
         shader: ShaderKind::GasPlanet,
         outline: false,
     };
+    let droid_material = Material {
+        base_color: Vec3::new(0.46, 0.48, 0.52),
+        emissive: Vec3::default(),
+        shader: ShaderKind::DroidPlanet,
+        outline: true,
+    };
     let mut camera = Camera::new(
         Vec3::new(0.0, 0.0, INITIAL_CAMERA_DISTANCE),
         FRAMEBUFFER_WIDTH as f32 / FRAMEBUFFER_HEIGHT as f32,
@@ -101,7 +112,7 @@ fn main() {
     let mut orbit_yaw = 0.0_f32;
     let mut orbit_pitch = 0.0_f32;
     let mut camera_distance = INITIAL_CAMERA_DISTANCE;
-    let mut selection = PlanetSelection::Gas;
+    let mut selection = PlanetSelection::Droid;
     let mut sun_heat_haze = true;
     let mut rendered_frames = 0_u32;
 
@@ -135,16 +146,25 @@ fn main() {
         if rl.is_key_pressed(KeyboardKey::KEY_FOUR) {
             selection = PlanetSelection::Gas;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_FIVE) {
+            selection = PlanetSelection::Droid;
+        }
         if capture_path.is_none() && rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
             let mouse_delta = rl.get_mouse_delta();
             orbit_yaw -= mouse_delta.x * ORBIT_SENSITIVITY;
             orbit_pitch = (orbit_pitch - mouse_delta.y * ORBIT_SENSITIVITY)
                 .clamp(-MAX_ORBIT_PITCH, MAX_ORBIT_PITCH);
         }
+        let minimum_camera_distance = if selection == PlanetSelection::Rocky {
+            ROCKY_MIN_CAMERA_DISTANCE
+        } else {
+            MIN_CAMERA_DISTANCE
+        };
         if capture_path.is_none() {
             camera_distance = (camera_distance - rl.get_mouse_wheel_move() * ZOOM_STEP)
-                .clamp(MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
+                .clamp(minimum_camera_distance, MAX_CAMERA_DISTANCE);
         }
+        camera_distance = camera_distance.max(minimum_camera_distance);
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
             orbit_yaw = 0.0;
             orbit_pitch = 0.0;
@@ -155,7 +175,12 @@ fn main() {
         renderer.light = PointLight::new(camera.position, 0.20);
         renderer.heat_haze_enabled = selection == PlanetSelection::Sun && sun_heat_haze;
 
-        let model_matrix = Mat4::rotation_x(-0.16)
+        let tilt = match selection {
+            // El disco del Droid conserva el plano XZ del modelo original.
+            PlanetSelection::Droid => Mat4::rotation_x(0.0),
+            _ => Mat4::rotation_x(-0.16),
+        };
+        let model_matrix = tilt
             * Mat4::rotation_y(rotation)
             * Mat4::scale(Vec3::new(SUN_RADIUS, SUN_RADIUS, SUN_RADIUS));
         let (mesh, material) = match selection {
@@ -163,6 +188,7 @@ fn main() {
             PlanetSelection::Core => (&core, core_material),
             PlanetSelection::Rocky => (&sun, rocky_material),
             PlanetSelection::Gas => (&sun, gas_material),
+            PlanetSelection::Droid => (&droid, droid_material),
         };
         let objects = [RenderObject {
             mesh,

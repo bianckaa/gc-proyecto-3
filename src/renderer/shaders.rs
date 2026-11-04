@@ -2,11 +2,13 @@ use super::lighting::PointLight;
 use super::rasterizer::Fragment;
 use super::Material;
 use crate::engine::math::{Vec2, Vec3};
+use std::sync::OnceLock;
 
 const FBM_OCTAVES: u32 = 4;
 const SUN_MAX_DITHER_INTENSITY: f32 = 0.86;
-const ROCKY_CRATER_COUNT: u32 = 18;
+const ROCKY_CRATER_COUNT: usize = 18;
 const GOLDEN_ANGLE: f32 = 2.399_963_1;
+static ROCKY_CRATERS: OnceLock<[(Vec3, f32); ROCKY_CRATER_COUNT]> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Surface {
@@ -22,8 +24,7 @@ pub struct ShadeInput<'a> {
 }
 
 fn hash(x: i32, y: i32, z: i32) -> f32 {
-    let seed = (x as u32)
-        .wrapping_mul(73_856_093)
+    let seed = (x as u32).wrapping_mul(73_856_093)
         ^ (y as u32).wrapping_mul(19_349_663)
         ^ (z as u32).wrapping_mul(83_492_791);
     let mixed = (seed ^ (seed >> 13)).wrapping_mul(1_274_126_177);
@@ -33,11 +34,19 @@ fn hash(x: i32, y: i32, z: i32) -> f32 {
 pub fn value_noise(point: Vec3) -> f32 {
     let (ix, iy, iz) = (point.x.floor(), point.y.floor(), point.z.floor());
     let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
-    let (fx, fy, fz) = (smooth(point.x - ix), smooth(point.y - iy), smooth(point.z - iz));
+    let (fx, fy, fz) = (
+        smooth(point.x - ix),
+        smooth(point.y - iy),
+        smooth(point.z - iz),
+    );
     let (ix, iy, iz) = (ix as i32, iy as i32, iz as i32);
     let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let row = |dy: i32, dz: i32| {
-        mix(hash(ix, iy + dy, iz + dz), hash(ix + 1, iy + dy, iz + dz), fx)
+        mix(
+            hash(ix, iy + dy, iz + dz),
+            hash(ix + 1, iy + dy, iz + dz),
+            fx,
+        )
     };
     mix(
         mix(row(0, 0), row(1, 0), fy),
@@ -111,16 +120,20 @@ fn shade_sun(input: &ShadeInput) -> Surface {
     let deep_orange = input.material.base_color * 0.86;
     let hot_yellow = Vec3::new(1.0, 0.90, 0.32);
     let white_hot = Vec3::new(1.0, 1.0, 0.92);
-    let plasma = mix(deep_orange, hot_yellow, (turbulence * 0.9 + granules * 0.2).min(1.0));
-    let color = mix(mix(plasma, white_hot, filaments * 0.55), white_hot, eruption);
+    let plasma = mix(
+        deep_orange,
+        hot_yellow,
+        (turbulence * 0.9 + granules * 0.2).min(1.0),
+    );
+    let color = mix(
+        mix(plasma, white_hot, filaments * 0.55),
+        white_hot,
+        eruption,
+    );
     let pulse = 0.92 + 0.08 * (time * 1.7).sin();
-    let intensity =
-        ((0.78 + turbulence * 0.48 + filaments * 0.38 + eruption * 0.70) * pulse)
-            .min(SUN_MAX_DITHER_INTENSITY);
-    Surface {
-        color,
-        intensity,
-    }
+    let intensity = ((0.78 + turbulence * 0.48 + filaments * 0.38 + eruption * 0.70) * pulse)
+        .min(SUN_MAX_DITHER_INTENSITY);
+    Surface { color, intensity }
 }
 
 fn solar_eruption(direction: Vec3, time: f32, center: Vec3, phase: f32) -> f32 {
@@ -142,7 +155,11 @@ fn shade_gas_giant(input: &ShadeInput) -> Surface {
     let latitude = direction.y + distortion * 0.25;
     let band = (latitude * 16.0).sin() * 0.5 + 0.5;
     Surface {
-        color: mix(input.material.base_color * 0.55, input.material.base_color, band),
+        color: mix(
+            input.material.base_color * 0.55,
+            input.material.base_color,
+            band,
+        ),
         intensity: lit_intensity(input) * (0.45 + 0.55 * band),
     }
 }
@@ -184,15 +201,15 @@ fn shade_gas_planet(input: &ShadeInput) -> Surface {
     // Capa 4: dos huracanes con ojo y brazos espirales animados.
     let hurricane_a = gas_hurricane(
         direction,
-        Vec2::new(0.30, -0.12),
-        Vec2::new(0.42, 0.24),
+        Vec2::new(0.52, -0.28),
+        Vec2::new(0.36, 0.21),
         time,
         0.0,
     );
     let hurricane_b = gas_hurricane(
         direction,
-        Vec2::new(-0.38, 0.34),
-        Vec2::new(0.30, 0.17),
+        Vec2::new(-0.56, 0.42),
+        Vec2::new(0.27, 0.16),
         -time * 0.82,
         2.1,
     );
@@ -264,26 +281,32 @@ fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
 }
 
 fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
-    let continental = fbm(direction * 2.15 + Vec3::new(3.7, -1.4, 2.2));
-    let warp = Vec3::new(
-        value_noise(direction * 1.7 + Vec3::new(9.0, 0.0, 0.0)),
-        value_noise(direction * 1.7 + Vec3::new(0.0, 9.0, 0.0)),
-        value_noise(direction * 1.7 + Vec3::new(0.0, 0.0, 9.0)),
-    );
-    let mountain_field = fbm(direction * 7.0 + warp * 2.3);
+    let continental = value_noise(direction * 2.15 + Vec3::new(3.7, -1.4, 2.2));
+    let warp = value_noise(direction * 3.1 + Vec3::new(9.0, -4.0, 2.0)) - 0.5;
+    let mountain_field =
+        value_noise(direction * 7.0 + Vec3::new(warp * 2.3, -warp * 1.6, warp * 1.9));
     let ridge = (1.0 - (mountain_field * 2.0 - 1.0).abs())
         .clamp(0.0, 1.0)
         .powi(3);
     let land = smoothstep(0.36, 0.68, continental);
     let mountains = ridge * land;
-    let grit = value_noise(direction * 42.0 + Vec3::new(4.0, 7.0, 2.0));
-    let height = (continental * 0.42 + mountains * 0.58 + (grit - 0.5) * 0.08)
-        .clamp(0.0, 1.0);
+    let grit = hash(
+        (direction.x * 48.0).floor() as i32 + 4,
+        (direction.y * 48.0).floor() as i32 + 7,
+        (direction.z * 48.0).floor() as i32 + 2,
+    );
+    let height = (continental * 0.42 + mountains * 0.58 + (grit - 0.5) * 0.08).clamp(0.0, 1.0);
     (height, mountains, grit)
 }
 
 fn crater_field(direction: Vec3, center: Vec3, radius: f32) -> (f32, f32, f32) {
-    let distance = (direction - center.normalize()).length();
+    let offset = direction - center;
+    let maximum_radius = radius * 1.61;
+    let distance_squared = offset.dot(offset);
+    if distance_squared > maximum_radius * maximum_radius {
+        return (0.0, 0.0, 0.0);
+    }
+    let distance = distance_squared.sqrt();
     let bowl = (1.0 - distance / radius).clamp(0.0, 1.0);
     let rim = (1.0 - (distance - radius).abs() / (radius * 0.18)).clamp(0.0, 1.0);
     let ejecta_radius = radius * 1.48;
@@ -291,38 +314,34 @@ fn crater_field(direction: Vec3, center: Vec3, radius: f32) -> (f32, f32, f32) {
     (bowl * bowl, rim * rim, ejecta * ejecta)
 }
 
-fn distributed_crater(index: u32) -> (Vec3, f32) {
+fn distributed_crater(index: usize) -> (Vec3, f32) {
     let fraction = (index as f32 + 0.5) / ROCKY_CRATER_COUNT as f32;
     let height = 1.0 - fraction * 2.0;
     let ring = (1.0 - height * height).sqrt();
     let azimuth = index as f32 * GOLDEN_ANGLE;
     let center = Vec3::new(ring * azimuth.cos(), height, ring * azimuth.sin());
     let variation = hash(index as i32, 31, 7);
-    let radius =
-        0.095 + variation * 0.095 + if index.is_multiple_of(6) { 0.045 } else { 0.0 };
+    let radius = 0.095 + variation * 0.095 + if index.is_multiple_of(6) { 0.045 } else { 0.0 };
     (center, radius)
 }
 
+fn rocky_craters() -> &'static [(Vec3, f32); ROCKY_CRATER_COUNT] {
+    ROCKY_CRATERS.get_or_init(|| std::array::from_fn(distributed_crater))
+}
+
 fn erosion_field(direction: Vec3, height: f32, mountains: f32) -> f32 {
-    let warp = fbm(direction * 3.4 + Vec3::new(-2.0, 5.0, 1.0));
-    let flow_point = direction * 15.0
-        + Vec3::new(warp * 3.2, height * 5.5 - warp * 1.8, -warp * 2.6);
-    let flow = fbm(flow_point);
+    let flow_point =
+        direction * 15.0 + Vec3::new(height * 2.4, height * 5.5 - mountains * 1.8, -height * 2.1);
+    let flow = value_noise(flow_point);
     let channel = (1.0 - (flow - 0.5).abs() * 24.0).clamp(0.0, 1.0);
     channel * smoothstep(0.32, 0.76, height) * (0.35 + mountains * 0.65)
 }
 
-fn terrain_occlusion(
-    height: f32,
-    mountains: f32,
-    crater_bowl: f32,
-    erosion: f32,
-) -> f32 {
+fn terrain_occlusion(height: f32, mountains: f32, crater_bowl: f32, erosion: f32) -> f32 {
     let valley = 1.0 - smoothstep(0.24, 0.56, height);
-    let mountain_cavity = (1.0 - smoothstep(0.08, 0.48, mountains))
-        * smoothstep(0.34, 0.66, height);
-    (valley * 0.38 + mountain_cavity * 0.16 + crater_bowl * 0.46 + erosion * 0.12)
-        .clamp(0.0, 1.0)
+    let mountain_cavity =
+        (1.0 - smoothstep(0.08, 0.48, mountains)) * smoothstep(0.34, 0.66, height);
+    (valley * 0.38 + mountain_cavity * 0.16 + crater_bowl * 0.46 + erosion * 0.12).clamp(0.0, 1.0)
 }
 
 fn shade_rocky_planet(input: &ShadeInput) -> Surface {
@@ -346,8 +365,7 @@ fn shade_rocky_planet(input: &ShadeInput) -> Surface {
 
     // Capa 4: tres crateres con cuencas oscuras y bordes elevados.
     let (mut bowl, mut rim, mut ejecta) = (0.0_f32, 0.0_f32, 0.0_f32);
-    for index in 0..ROCKY_CRATER_COUNT {
-        let (center, radius) = distributed_crater(index);
+    for &(center, radius) in rocky_craters() {
         let (sample_bowl, sample_rim, sample_ejecta) = crater_field(direction, center, radius);
         bowl = bowl.max(sample_bowl);
         rim = rim.max(sample_rim);
@@ -395,10 +413,7 @@ fn panel_sample(uv: Vec2, columns: f32, rows: f32, seed: i32) -> (f32, f32, Vec2
     let cell_y = scaled.y.floor() as i32;
     let local = Vec2::new(scaled.x.rem_euclid(1.0), scaled.y.rem_euclid(1.0));
     let value = hash(cell_x, cell_y, seed);
-    let edge = local
-        .x
-        .min(1.0 - local.x)
-        .min(local.y.min(1.0 - local.y));
+    let edge = local.x.min(1.0 - local.x).min(local.y.min(1.0 - local.y));
     (value, edge, local)
 }
 
@@ -439,6 +454,15 @@ fn shade_core_planet(input: &ShadeInput) -> Surface {
     };
     let energy = (conduit * 0.75 + module_shape).min(1.0);
 
+    // Capa 5: luz amarilla que nace de los canales hundidos del modelo.
+    // Se usa el centro propio de la esfera, no el centro del modelo completo,
+    // porque las estructuras externas desplazan el origen al normalizarlo.
+    let core_sphere_center = Vec3::new(0.0, -0.145_505, 0.0);
+    let body_radius = (input.fragment.local_position - core_sphere_center).length();
+    let inset_floor = smoothstep(0.505, 0.522, body_radius);
+    let inset_depth = 1.0 - smoothstep(0.535, 0.562, body_radius);
+    let inset_glow = (inset_floor * inset_depth).clamp(0.0, 1.0);
+
     let relief = (macro_panel * 0.48 + medium_panel * 0.34 + module_shape * 0.18)
         * (1.0 - macro_seam * 0.65)
         * (1.0 - medium_seam * 0.45);
@@ -452,9 +476,98 @@ fn shade_core_planet(input: &ShadeInput) -> Surface {
         (macro_seam * 0.82 + medium_seam * 0.55).min(1.0),
     );
     let energy_color = Vec3::new(0.28, 0.96, 1.0);
-    let color = mix(with_seams, energy_color, energy * 0.88);
+    let inset_light = Vec3::new(1.0, 0.72, 0.08);
+    let color = mix(
+        mix(with_seams, energy_color, energy * 0.88),
+        inset_light,
+        inset_glow * 0.92,
+    );
     let light = lit_intensity(input);
-    let intensity = (light * (0.30 + relief * 0.78) + energy * 0.38).clamp(0.16, 0.88);
+    let pulse = 0.88 + 0.12 * (input.time * 2.1).sin().abs();
+    let intensity = (light * (0.30 + relief * 0.78) + energy * 0.38 + inset_glow * pulse * 0.52)
+        .clamp(0.16, 0.88);
+
+    Surface { color, intensity }
+}
+
+fn shade_droid_planet(input: &ShadeInput) -> Surface {
+    let uv = core_projection(input.fragment.local_position);
+
+    // Capa 1: placas blindadas grandes con distintos niveles visuales.
+    let (armor, armor_edge, armor_local) = panel_sample(uv, 4.5, 3.5, 137);
+    let (subpanel, subpanel_edge, subpanel_local) =
+        panel_sample(Vec2::new(uv.x - 0.11, uv.y + 0.17), 12.0, 8.0, 211);
+    let plate_height = armor * 0.58 + subpanel * 0.42;
+
+    // Capa 2: zanjas profundas entre placas y paneles secundarios.
+    let armor_trench = (1.0 - armor_edge * 34.0).clamp(0.0, 1.0);
+    let subpanel_trench = (1.0 - subpanel_edge * 52.0).clamp(0.0, 1.0);
+    let trench = armor_trench.max(subpanel_trench * 0.72);
+
+    // Capa 3: franjas diagonales industriales en placas seleccionadas.
+    let stripe_coordinate = (uv.x * 17.0 + uv.y * 11.0).rem_euclid(2.0);
+    let stripe = if armor > 0.68 && stripe_coordinate < 0.62 {
+        1.0
+    } else {
+        0.0
+    };
+    let stripe_border =
+        if armor > 0.68 && ((stripe_coordinate - 0.62).abs() < 0.07 || stripe_coordinate > 1.92) {
+            1.0
+        } else {
+            0.0
+        };
+
+    // Capa 4: modulos rectangulares y respiraderos mecanicos pequenos.
+    let (module_cell, _, module_local) = panel_sample(uv, 24.0, 18.0, 307);
+    let module = if module_cell > 0.73
+        && (module_local.x - 0.5).abs() < 0.28
+        && (module_local.y - 0.5).abs() < 0.17
+    {
+        1.0
+    } else {
+        0.0
+    };
+    let vent = if module_cell < 0.16
+        && (module_local.x - 0.5).abs() < 0.09
+        && (module_local.y - 0.5).abs() < 0.38
+    {
+        1.0
+    } else {
+        0.0
+    };
+
+    // Capa 5: conductos de energia roja con pulsacion independiente.
+    let horizontal_wire = if subpanel > 0.54 {
+        (1.0 - (subpanel_local.y - 0.52).abs() * 64.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let vertical_wire = if subpanel < 0.25 {
+        (1.0 - (subpanel_local.x - 0.64).abs() * 64.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let pulse = 0.62 + 0.38 * (input.time * 3.4 + armor_local.y * 8.0).sin().abs();
+    let energy = horizontal_wire.max(vertical_wire).max(module * 0.82) * pulse;
+
+    let black_metal = Vec3::new(0.032, 0.036, 0.044);
+    let armor_metal = input.material.base_color;
+    let worn_metal = Vec3::new(0.66, 0.68, 0.70);
+    let stripe_metal = Vec3::new(0.22, 0.24, 0.28);
+    let energy_red = Vec3::new(1.0, 0.06, 0.025);
+    let mut color = mix(black_metal, armor_metal, 0.24 + plate_height * 0.70);
+    color = mix(color, worn_metal, subpanel * 0.22);
+    color = mix(color, black_metal, trench * 0.92 + vent * 0.78);
+    color = mix(color, stripe_metal, stripe * 0.72);
+    color = mix(color, black_metal, stripe_border * 0.88);
+    color = mix(color, energy_red, energy * 0.94);
+
+    let light = lit_intensity(input);
+    let intensity =
+        (light * (0.31 + plate_height * 0.72) + stripe * 0.10 + energy * 0.44).clamp(0.18, 0.88);
+    Surface { color, intensity }
+}
 
     Surface { color, intensity }
 }
@@ -462,6 +575,7 @@ fn shade_core_planet(input: &ShadeInput) -> Surface {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderKind {
     CorePlanet,
+    DroidPlanet,
     GasPlanet,
     Lambert,
     Rocky,
@@ -475,6 +589,7 @@ pub enum ShaderKind {
 pub fn shade(input: &ShadeInput) -> Surface {
     let surface = match input.material.shader {
         ShaderKind::CorePlanet => shade_core_planet(input),
+        ShaderKind::DroidPlanet => shade_droid_planet(input),
         ShaderKind::GasPlanet => shade_gas_planet(input),
         ShaderKind::Lambert => shade_lambert(input),
         ShaderKind::Rocky => shade_rocky(input),
