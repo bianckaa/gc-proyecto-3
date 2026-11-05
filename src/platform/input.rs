@@ -11,6 +11,7 @@ pub enum Key {
     E,
     C,
     F,
+    G,
     H,
     O,
     Tab,
@@ -33,7 +34,7 @@ pub enum Key {
 }
 
 impl Key {
-    pub const ALL: [Key; 27] = [
+    pub const ALL: [Key; 28] = [
         Key::W,
         Key::A,
         Key::S,
@@ -42,6 +43,7 @@ impl Key {
         Key::E,
         Key::C,
         Key::F,
+        Key::G,
         Key::H,
         Key::O,
         Key::Tab,
@@ -81,6 +83,7 @@ impl Key {
             Key::E => KeyboardKey::KEY_E,
             Key::C => KeyboardKey::KEY_C,
             Key::F => KeyboardKey::KEY_F,
+            Key::G => KeyboardKey::KEY_G,
             Key::H => KeyboardKey::KEY_H,
             Key::O => KeyboardKey::KEY_O,
             Key::Tab => KeyboardKey::KEY_TAB,
