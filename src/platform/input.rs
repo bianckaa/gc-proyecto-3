@@ -26,10 +26,14 @@ pub enum Key {
     Digit3,
     Digit4,
     Digit5,
+    M,
+    Minus,
+    Equal,
+    Escape,
 }
 
 impl Key {
-    pub const ALL: [Key; 23] = [
+    pub const ALL: [Key; 27] = [
         Key::W,
         Key::A,
         Key::S,
@@ -53,6 +57,10 @@ impl Key {
         Key::Digit3,
         Key::Digit4,
         Key::Digit5,
+        Key::M,
+        Key::Minus,
+        Key::Equal,
+        Key::Escape,
     ];
 
     pub const DIGITS: [Key; 5] = [
@@ -88,6 +96,10 @@ impl Key {
             Key::Digit3 => KeyboardKey::KEY_THREE,
             Key::Digit4 => KeyboardKey::KEY_FOUR,
             Key::Digit5 => KeyboardKey::KEY_FIVE,
+            Key::M => KeyboardKey::KEY_M,
+            Key::Minus => KeyboardKey::KEY_MINUS,
+            Key::Equal => KeyboardKey::KEY_EQUAL,
+            Key::Escape => KeyboardKey::KEY_ESCAPE,
         }
     }
 }
