@@ -6,6 +6,7 @@ pub mod framebuffer;
 pub mod heat_haze;
 pub mod lighting;
 pub mod lines;
+pub mod normal_map;
 pub mod obj;
 pub mod outline;
 pub mod pipeline;
@@ -23,6 +24,7 @@ use dithering::{dither, screen_door_visible};
 use framebuffer::{Color, Framebuffer};
 use heat_haze::HeatHaze;
 use lighting::PointLight;
+use normal_map::NormalMap;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use rasterizer::FragmentOutput;
 use shaders::{fbm, shade, ShadeInput, ShaderKind};
@@ -35,6 +37,7 @@ const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
 const STAR_SEED: u32 = 20_260_001;
 const STAR_COUNT: usize = 1800;
+const NORMAL_MAP_SEED: u32 = 20_260_002;
 const LOD_HIGH_DISTANCE: f32 = 12.0;
 const LOD_MEDIUM_DISTANCE: f32 = 40.0;
 const CRATER_RIM_END: f32 = 1.4;
@@ -108,6 +111,7 @@ pub struct Renderer {
     pub outline_enabled: bool,
     pub culling_enabled: bool,
     pub lod_enabled: bool,
+    pub normal_mapping_enabled: bool,
     pub warp: WarpEffect,
     pub metrics: Metrics,
     framebuffer: Framebuffer,
@@ -115,6 +119,7 @@ pub struct Renderer {
     object_buffer: ObjectBuffer,
     outline_pixels: Vec<OutlinePixel>,
     heat_haze: HeatHaze,
+    normal_map: NormalMap,
     skybox: Skybox,
     queued_lines: Vec<QueuedLine>,
 }
@@ -128,6 +133,7 @@ impl Renderer {
             outline_enabled: true,
             culling_enabled: true,
             lod_enabled: true,
+            normal_mapping_enabled: true,
             warp: WarpEffect::new(),
             metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
@@ -135,6 +141,7 @@ impl Renderer {
             object_buffer: ObjectBuffer::new(),
             outline_pixels: Vec::new(),
             heat_haze: HeatHaze::new(),
+            normal_map: NormalMap::procedural(NORMAL_MAP_SEED),
             skybox: Skybox::new(STAR_SEED, STAR_COUNT),
             queued_lines: Vec::new(),
         }
@@ -151,6 +158,8 @@ impl Renderer {
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
         let dithering_enabled = self.dithering_enabled;
+        let normal_mapping_enabled = self.normal_mapping_enabled;
+        let normal_map = Some(&self.normal_map);
 
         self.object_buffer.clear();
         let object_buffer = &mut self.object_buffer;
@@ -194,6 +203,7 @@ impl Renderer {
                         material: &material,
                         light: &light,
                         time,
+                        normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
                     if material.shader == ShaderKind::GasPlanet {
                         let color = Color::from_unit(
