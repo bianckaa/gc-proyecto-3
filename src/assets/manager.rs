@@ -1,12 +1,34 @@
 use super::material::{Material, MaterialHandle};
-use super::mesh::{bounding_radius, placeholder_ship, Mesh, MeshHandle};
+use super::mesh::{
+    bounding_radius, normalize_to_unit_radius, placeholder_ship, turned_around, LodHandle, Mesh,
+    MeshHandle,
+};
 use super::obj_loader::{load_obj, parse_obj, ObjError};
+use crate::renderer::LodGroup;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub const SHIP_MODEL_PATH: &str = "assets/models/ship.obj";
+pub const MODELS_DIRECTORY: &str = "assets/models";
+pub const SHIP_MODEL_FILE: &str = "ETA_2.obj";
+pub const SHIP_MODEL_PATH: &str = "assets/models/ETA_2.obj";
 const PLACEHOLDER_SHIP_NAME: &str = "nave_temporal";
+const MODEL_KEY_PREFIX: &str = "modelo:";
+
+pub fn model_path(file_name: &str) -> Option<PathBuf> {
+    let relative = Path::new(MODELS_DIRECTORY).join(file_name);
+    let mut candidates = vec![relative.clone()];
+    if let Ok(executable) = std::env::current_exe() {
+        candidates.extend(
+            executable
+                .ancestors()
+                .skip(1)
+                .map(|folder| folder.join(&relative)),
+        );
+    }
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(&relative));
+    candidates.into_iter().find(|path| path.is_file())
+}
 
 struct MeshEntry {
     mesh: Mesh,
@@ -19,6 +41,8 @@ pub struct AssetManager {
     mesh_names: HashMap<String, MeshHandle>,
     materials: Vec<Material>,
     material_names: HashMap<String, MaterialHandle>,
+    lods: Vec<LodGroup>,
+    lod_names: HashMap<String, LodHandle>,
 }
 
 impl AssetManager {
@@ -77,8 +101,80 @@ impl AssetManager {
         self.mesh_or_insert_with(fallback_name, build_fallback)
     }
 
+    pub fn load_model_or_else(
+        &mut self,
+        file_name: &str,
+        build_fallback: impl FnOnce() -> Mesh,
+    ) -> MeshHandle {
+        let key = format!("{MODEL_KEY_PREFIX}{file_name}");
+        if let Some(handle) = self.find_mesh(&key) {
+            return handle;
+        }
+        let loaded = match model_path(file_name) {
+            Some(path) => load_obj(&path).map_err(|error| {
+                eprintln!(
+                    "no se pudo cargar {}: {error}; se usa la malla temporal",
+                    path.display()
+                )
+            }),
+            None => {
+                eprintln!(
+                    "no se encontro {MODELS_DIRECTORY}/{file_name}; se usa la malla temporal"
+                );
+                Err(())
+            }
+        };
+        let mut mesh = loaded.unwrap_or_else(|_| build_fallback());
+        normalize_to_unit_radius(&mut mesh);
+        self.insert_mesh(key, mesh)
+    }
+
+    pub fn optional_model_or_else(
+        &mut self,
+        file_name: &str,
+        build_fallback: impl FnOnce() -> Mesh,
+    ) -> MeshHandle {
+        if model_path(file_name).is_some() {
+            return self.load_model_or_else(file_name, build_fallback);
+        }
+        self.mesh_or_insert_with(file_name, || {
+            let mut mesh = build_fallback();
+            normalize_to_unit_radius(&mut mesh);
+            mesh
+        })
+    }
+
     pub fn load_ship(&mut self) -> MeshHandle {
-        self.load_mesh_or_else(SHIP_MODEL_PATH, PLACEHOLDER_SHIP_NAME, placeholder_ship)
+        if model_path(SHIP_MODEL_FILE).is_none() {
+            return self.mesh_or_insert_with(PLACEHOLDER_SHIP_NAME, || {
+                let mut mesh = turned_around(placeholder_ship());
+                normalize_to_unit_radius(&mut mesh);
+                mesh
+            });
+        }
+        self.load_model_or_else(SHIP_MODEL_FILE, || turned_around(placeholder_ship()))
+    }
+
+    pub fn lod_or_insert_with(
+        &mut self,
+        name: &str,
+        build: impl FnMut(usize) -> Mesh,
+    ) -> LodHandle {
+        if let Some(&handle) = self.lod_names.get(name) {
+            return handle;
+        }
+        let handle = LodHandle::new(self.lods.len());
+        self.lods.push(LodGroup::new(build));
+        self.lod_names.insert(name.to_owned(), handle);
+        handle
+    }
+
+    pub fn lod(&self, handle: LodHandle) -> &LodGroup {
+        &self.lods[handle.index()]
+    }
+
+    pub fn lod_bounding_radius(&self, handle: LodHandle) -> f32 {
+        bounding_radius(&self.lods[handle.index()].levels[0])
     }
 
     pub fn find_mesh(&self, name: &str) -> Option<MeshHandle> {

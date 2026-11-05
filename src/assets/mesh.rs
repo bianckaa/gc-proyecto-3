@@ -19,6 +19,69 @@ impl MeshHandle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LodHandle(usize);
+
+impl LodHandle {
+    pub(super) fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0
+    }
+}
+
+pub fn normalize_to_unit_radius(mesh: &mut Mesh) {
+    let Some(first) = mesh.vertices.first().map(|vertex| vertex.position) else {
+        return;
+    };
+    let (mut minimum, mut maximum) = (first, first);
+    for vertex in &mesh.vertices {
+        let p = vertex.position;
+        minimum = Vec3::new(minimum.x.min(p.x), minimum.y.min(p.y), minimum.z.min(p.z));
+        maximum = Vec3::new(maximum.x.max(p.x), maximum.y.max(p.y), maximum.z.max(p.z));
+    }
+    let center = (minimum + maximum) * 0.5;
+    let radius = mesh
+        .vertices
+        .iter()
+        .map(|vertex| (vertex.position - center).length())
+        .fold(0.0, f32::max);
+    if radius <= f32::EPSILON {
+        return;
+    }
+    for vertex in &mut mesh.vertices {
+        vertex.position = (vertex.position - center) * (1.0 / radius);
+    }
+}
+
+pub fn turned_around(mut mesh: Mesh) -> Mesh {
+    for vertex in &mut mesh.vertices {
+        vertex.position = Vec3::new(-vertex.position.x, vertex.position.y, -vertex.position.z);
+        vertex.normal = Vec3::new(-vertex.normal.x, vertex.normal.y, -vertex.normal.z);
+    }
+    mesh
+}
+
+pub fn crystal() -> Mesh {
+    let tip = Vec3::new(0.0, 1.0, 0.0);
+    let base = Vec3::new(0.0, -0.25, 0.0);
+    let ring = [
+        Vec3::new(0.3, 0.1, 0.0),
+        Vec3::new(0.0, 0.1, 0.22),
+        Vec3::new(-0.3, 0.1, 0.0),
+        Vec3::new(0.0, 0.1, -0.22),
+    ];
+    let mut mesh = Mesh::default();
+    for index in 0..ring.len() {
+        let next = ring[(index + 1) % ring.len()];
+        push_outward_triangle(&mut mesh, [tip, ring[index], next]);
+        push_outward_triangle(&mut mesh, [base, ring[index], next]);
+    }
+    mesh
+}
+
 pub fn bounding_radius(mesh: &Mesh) -> f32 {
     mesh.vertices
         .iter()
