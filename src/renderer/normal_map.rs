@@ -5,7 +5,7 @@ const MAP_SIZE: usize = 128;
 const BASE_PERIOD: i32 = 8;
 const OCTAVES: u32 = 3;
 const DEFAULT_TILING: f32 = 6.0;
-const DEFAULT_STRENGTH: f32 = 2.5;
+const DEFAULT_STRENGTH: f32 = 0.15;
 const MIN_TANGENT_LENGTH: f32 = 0.0001;
 
 pub struct NormalMap {
@@ -67,8 +67,9 @@ impl NormalMap {
         let normals = (0..MAP_SIZE * MAP_SIZE)
             .map(|index| {
                 let (x, y) = ((index % MAP_SIZE) as isize, (index / MAP_SIZE) as isize);
-                let slope_u = (at(x + 1, y) - at(x - 1, y)) * strength;
-                let slope_v = (at(x, y + 1) - at(x, y - 1)) * strength;
+                let scale = strength * MAP_SIZE as f32 * 0.5;
+                let slope_u = (at(x + 1, y) - at(x - 1, y)) * scale;
+                let slope_v = (at(x, y + 1) - at(x, y - 1)) * scale;
                 Vec3::new(-slope_u, -slope_v, 1.0).normalize()
             })
             .collect();
