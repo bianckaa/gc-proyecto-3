@@ -1,0 +1,680 @@
+pub mod hud;
+pub mod player;
+pub mod warp;
+
+use crate::assets::material::{glowing, solid};
+use crate::assets::mesh::{crystal, placeholder_ship, turned_around};
+use crate::assets::{AssetManager, MeshHandle};
+use crate::engine::camera::Camera;
+use crate::engine::collision::{resolve_all, Collider};
+use crate::engine::math::{Mat4, Vec3};
+use crate::engine::scene::{Entity, Model, Scene};
+use crate::engine::transform::{basis_rotation, rotate_vector, Transform};
+use crate::platform::input::{InputState, Key, MouseButton};
+use crate::renderer::framebuffer::Color;
+use crate::renderer::shaders::ShaderKind;
+use crate::renderer::warp_effect::WarpEffect;
+use crate::renderer::{Deformation, Material, Mesh, Renderer};
+use crate::world::generation::{asteroid_belt, scatter_surface, Asteroid, PropKind, SurfaceProp};
+use crate::world::orbit::Orbit;
+use crate::world::solar_system::MAX_TIME_SCALE;
+use crate::world::{SolarSystem, SystemConfig};
+use hud::HudInfo;
+use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
+use std::f32::consts::PI;
+use warp::{Destination, Warp, WarpEvent, WarpState};
+
+const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
+const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
+const ENEMY_MODEL_FILE: &str = "ENEMY1.obj";
+const SURFACE_CRYSTAL_FILE: &str = "crystal.obj";
+const ORBIT_CAMERA_DISTANCE_FACTOR: f32 = 1.6;
+const ORBIT_CAMERA_TILT: f32 = 1.0;
+const ORBIT_CAMERA_LOOK_RATIO: f32 = 0.7;
+const MODEL_FORWARD_CORRECTION: f32 = PI;
+const ENEMY_SCALE: f32 = 0.8;
+const COLLISION_MARGIN: f32 = 0.4;
+const CAMERA_RADIUS: f32 = 0.3;
+const CAMERA_FAR: f32 = 420.0;
+const FOLLOW_HEIGHT_RATIO: f32 = 0.36;
+const FOLLOW_LOOK_AHEAD: f32 = 9.0;
+const FOLLOW_SMOOTHING: f32 = 6.0;
+const DEFAULT_FOLLOW_DISTANCE: f32 = 4.6;
+const MIN_FOLLOW_DISTANCE: f32 = 3.0;
+const MAX_FOLLOW_DISTANCE: f32 = 14.0;
+const WHEEL_ZOOM_STEP: f32 = 0.8;
+const MOUSE_SENSITIVITY: f32 = 0.06;
+const FREE_CAMERA_SPEED: f32 = 12.0;
+const FREE_CAMERA_BOOST: f32 = 36.0;
+const FREE_CAMERA_YAW_RATE: f32 = 1.4;
+const FREE_CAMERA_PITCH_RATE: f32 = 1.1;
+const FREE_CAMERA_ROLL_RATE: f32 = 1.6;
+const TIME_SCALE_STEP: f32 = 0.25;
+const NOTICE_DURATION: f32 = 3.5;
+const WELCOME_DURATION: f32 = 7.0;
+const ORBIT_SEGMENTS: usize = 128;
+const ORBIT_COLOR: Color = Color::new(192, 80, 255);
+const DESTINATION_COLOR: Color = Color::new(92, 255, 92);
+const START_POSITION: Vec3 = Vec3::new(0.0, 10.0, 104.0);
+const START_DESTINATION: usize = 3;
+const PLAYER_COLOR: Vec3 = Vec3::new(0.36, 1.0, 0.36);
+const PLAYER_GLOW: Vec3 = Vec3::new(0.05, 0.2, 0.05);
+const ENEMY_COLOR: Vec3 = Vec3::new(0.46, 0.11, 0.68);
+const SAND_COLOR: Vec3 = Vec3::new(0.85, 0.76, 0.6);
+const CRYSTAL_COLOR: Vec3 = Vec3::new(0.75, 0.31, 1.0);
+const CRYSTAL_GLOW: Vec3 = Vec3::new(0.12, 0.03, 0.18);
+const BOULDER_COLOR: Vec3 = Vec3::new(0.62, 0.5, 0.38);
+
+const ASTEROID_DEFORMATION: Deformation = Deformation {
+    seed: 11,
+    amplitude: 0.35,
+    frequency: 2.5,
+    crater_count: 4,
+    crater_radius: 0.45,
+    crater_depth: 0.12,
+};
+
+const BOULDER_DEFORMATION: Deformation = Deformation {
+    seed: 29,
+    amplitude: 0.3,
+    frequency: 3.0,
+    crater_count: 0,
+    crater_radius: 0.3,
+    crater_depth: 0.0,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraMode {
+    Follow,
+    Free,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Enemy {
+    pub host: usize,
+    pub orbit: Orbit,
+    pub scale: f32,
+}
+
+struct Models {
+    bodies: Vec<Model>,
+    ship: MeshHandle,
+    enemy: MeshHandle,
+    asteroid: Model,
+    crystal: Model,
+    boulder: Model,
+}
+
+struct Materials {
+    ship: Material,
+    enemy: Material,
+    asteroid: Material,
+    crystal: Material,
+    boulder: Material,
+}
+
+struct Surface {
+    body: usize,
+    props: Vec<SurfaceProp>,
+    embed_depth: f32,
+}
+
+pub struct Game {
+    pub system: SolarSystem,
+    pub ship: Ship,
+    pub warp: Warp,
+    pub camera_mode: CameraMode,
+    pub destination: usize,
+    pub show_help: bool,
+    pub show_metrics: bool,
+    asteroids: Vec<Asteroid>,
+    surfaces: Vec<Surface>,
+    enemies: Vec<Enemy>,
+    models: Models,
+    materials: Materials,
+    colliders: Vec<Collider>,
+    follow_distance: f32,
+    notice: Option<(String, f32)>,
+    quit_requested: bool,
+    time: f32,
+}
+
+fn sphere_lod(
+    subdivisions: [u32; 3],
+    deformation: Option<Deformation>,
+) -> impl FnMut(usize) -> Mesh {
+    move |level| {
+        let mut mesh = Mesh::icosphere(subdivisions[level]);
+        if let Some(deformation) = deformation {
+            mesh.deform(&deformation);
+        }
+        mesh
+    }
+}
+
+fn load_models(assets: &mut AssetManager, system: &SolarSystem) -> Models {
+    let sphere =
+        Model::Lod(assets.lod_or_insert_with("esfera", sphere_lod(SPHERE_SUBDIVISIONS, None)));
+    let bodies = (0..system.body_count())
+        .map(|index| match system.body(index).model.file_name() {
+            Some(file_name) => Model::Mesh(
+                assets.load_model_or_else(file_name, || Mesh::icosphere(SPHERE_SUBDIVISIONS[0])),
+            ),
+            None => sphere,
+        })
+        .collect();
+    Models {
+        bodies,
+        ship: assets.load_ship(),
+        enemy: assets.load_model_or_else(ENEMY_MODEL_FILE, || turned_around(placeholder_ship())),
+        asteroid: Model::Lod(assets.lod_or_insert_with(
+            "asteroide",
+            sphere_lod(ASTEROID_SUBDIVISIONS, Some(ASTEROID_DEFORMATION)),
+        )),
+        crystal: Model::Mesh(assets.optional_model_or_else(SURFACE_CRYSTAL_FILE, crystal)),
+        boulder: Model::Lod(assets.lod_or_insert_with(
+            "roca_superficie",
+            sphere_lod(ASTEROID_SUBDIVISIONS, Some(BOULDER_DEFORMATION)),
+        )),
+    }
+}
+
+fn patrols(system: &SolarSystem) -> Vec<Enemy> {
+    let plan: [(&str, f32, f32, f32, f32); 6] = [
+        ("ROCOSO", 2.4, 0.42, 0.0, 0.5),
+        ("ROCOSO", 3.1, -0.3, 2.5, -0.9),
+        ("GASEOSO", 2.2, 0.28, 1.0, 0.3),
+        ("GASEOSO", 2.8, -0.22, 4.0, -0.6),
+        ("DROIDE", 1.9, 0.25, 0.5, 0.15),
+        ("NUCLEO", 2.6, 0.35, 3.3, 1.1),
+    ];
+    plan.iter()
+        .filter_map(|&(name, distance, speed, phase, tilt)| {
+            let host = system.find(name)?;
+            let radius = system.body(host).radius * distance;
+            Some(Enemy {
+                host,
+                orbit: Orbit::circular(radius, speed, phase).with_tilt(tilt, phase),
+                scale: ENEMY_SCALE,
+            })
+        })
+        .collect()
+}
+
+impl Game {
+    pub fn new(assets: &mut AssetManager, camera: &mut Camera) -> Self {
+        let system = SolarSystem::new(SystemConfig::standard());
+        let models = load_models(assets, &system);
+        let asteroids = asteroid_belt(&system.config.belt);
+        let surfaces = (0..system.body_count())
+            .filter_map(|body| {
+                let config = system.body(body).surface?;
+                Some(Surface {
+                    body,
+                    props: scatter_surface(&config),
+                    embed_depth: config.embed_depth,
+                })
+            })
+            .collect();
+        let enemies = patrols(&system);
+        let destination = START_DESTINATION.min(system.body_count() - 1);
+        let ship = Ship::new(
+            START_POSITION,
+            (system.sun_position() - START_POSITION).normalize(),
+        );
+        camera.far = CAMERA_FAR;
+        camera.position = ship.position - ship.forward() * DEFAULT_FOLLOW_DISTANCE
+            + ship.up() * (DEFAULT_FOLLOW_DISTANCE * FOLLOW_HEIGHT_RATIO);
+        camera.look_at(ship.position + ship.forward() * FOLLOW_LOOK_AHEAD);
+        let mut game = Self {
+            system,
+            ship,
+            warp: Warp::new(),
+            camera_mode: CameraMode::Follow,
+            destination,
+            show_help: false,
+            show_metrics: false,
+            asteroids,
+            surfaces,
+            enemies,
+            models,
+            materials: Materials {
+                ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
+                enemy: solid(ENEMY_COLOR, ShaderKind::EnemyShip),
+                asteroid: solid(SAND_COLOR, ShaderKind::Rocky),
+                crystal: glowing(CRYSTAL_COLOR, CRYSTAL_GLOW, ShaderKind::Lambert),
+                boulder: solid(BOULDER_COLOR, ShaderKind::Rocky),
+            },
+            colliders: Vec::new(),
+            follow_distance: DEFAULT_FOLLOW_DISTANCE,
+            notice: None,
+            quit_requested: false,
+            time: 0.0,
+        };
+        game.notify_for("PULSA H PARA VER LOS CONTROLES", WELCOME_DURATION);
+        game
+    }
+
+    pub fn quit_requested(&self) -> bool {
+        self.quit_requested
+    }
+
+    pub fn body_name(&self, index: usize) -> &'static str {
+        self.system.body(index).name
+    }
+
+    fn notify(&mut self, message: impl Into<String>) {
+        self.notify_for(message, NOTICE_DURATION);
+    }
+
+    fn notify_for(&mut self, message: impl Into<String>, duration: f32) {
+        self.notice = Some((message.into(), duration));
+    }
+
+    pub fn update(
+        &mut self,
+        input: &InputState,
+        delta_time: f32,
+        camera: &mut Camera,
+        effect: &mut WarpEffect,
+    ) {
+        self.time += delta_time;
+        self.handle_commands(input, effect);
+        self.system.update(delta_time);
+        self.refresh_colliders();
+
+        let controls = ship_controls(input);
+        let ship_controls = if self.camera_mode == CameraMode::Free {
+            ShipControls::default()
+        } else {
+            controls
+        };
+
+        if self.warp.is_traveling() {
+            let target = self.warp.target().unwrap_or(self.destination);
+            let destination = self.destination_of(target);
+            if let WarpEvent::Arrived(body) =
+                self.warp.update(delta_time, &mut self.ship, destination)
+            {
+                self.notify(format!(
+                    "LLEGADA A {} - PULSA O PARA ORBITAR",
+                    self.body_name(body)
+                ));
+            }
+        } else {
+            let destination = self.destination_of(self.destination);
+            self.warp.update(delta_time, &mut self.ship, destination);
+            self.fly(&ship_controls, delta_time);
+            let obstacles = if self.ship.is_orbiting() {
+                &self.colliders[..self.system.body_count()]
+            } else {
+                &self.colliders[..]
+            };
+            let (position, velocity, _) = resolve_all(
+                self.ship.position,
+                self.ship.velocity,
+                SHIP_RADIUS,
+                obstacles,
+                COLLISION_MARGIN,
+            );
+            self.ship.position = position;
+            if !self.ship.is_orbiting() {
+                self.ship.velocity = velocity;
+            }
+        }
+
+        match self.camera_mode {
+            CameraMode::Follow => self.follow_ship(camera, delta_time),
+            CameraMode::Free => self.fly_free_camera(camera, &controls, delta_time),
+        }
+        let (position, _, _) = resolve_all(
+            camera.position,
+            Vec3::default(),
+            CAMERA_RADIUS,
+            &self.colliders,
+            COLLISION_MARGIN,
+        );
+        camera.position = position;
+
+        effect.update(delta_time);
+        if let Some((_, remaining)) = &mut self.notice {
+            *remaining -= delta_time;
+            if *remaining <= 0.0 {
+                self.notice = None;
+            }
+        }
+    }
+
+    fn refresh_colliders(&mut self) {
+        self.colliders = self.system.colliders();
+        let time = self.system.orbital_time();
+        self.colliders.extend(
+            self.asteroids
+                .iter()
+                .map(|asteroid| Collider::sphere(asteroid.position(time), asteroid.radius())),
+        );
+    }
+
+    fn destination_of(&self, body: usize) -> Destination {
+        Destination {
+            center: self.system.position(body),
+            radius: self.system.body(body).radius,
+        }
+    }
+
+    fn handle_commands(&mut self, input: &InputState, effect: &mut WarpEffect) {
+        if input.was_pressed(Key::Escape) {
+            if self.show_help {
+                self.show_help = false;
+            } else {
+                self.quit_requested = true;
+            }
+        }
+        if input.was_pressed(Key::H) {
+            self.show_help = !self.show_help;
+        }
+        if input.was_pressed(Key::M) {
+            self.show_metrics = !self.show_metrics;
+        }
+        if input.was_pressed(Key::C) {
+            self.camera_mode = match self.camera_mode {
+                CameraMode::Follow => CameraMode::Free,
+                CameraMode::Free => CameraMode::Follow,
+            };
+            let message = match self.camera_mode {
+                CameraMode::Follow => "CAMARA SIGUE A LA NAVE",
+                CameraMode::Free => "CAMARA LIBRE - LA NAVE QUEDA EN PILOTO AUTOMATICO",
+            };
+            self.notify(message);
+        }
+        if input.was_pressed(Key::Minus) || input.was_pressed(Key::Equal) {
+            let step = if input.was_pressed(Key::Equal) {
+                TIME_SCALE_STEP
+            } else {
+                -TIME_SCALE_STEP
+            };
+            self.system.config.time_scale =
+                (self.system.config.time_scale + step).clamp(0.0, MAX_TIME_SCALE);
+            self.notify(format!(
+                "VELOCIDAD DE ORBITAS X{:.2}",
+                self.system.config.time_scale
+            ));
+        }
+        let wheel = input.wheel();
+        if wheel != 0.0 {
+            self.follow_distance = (self.follow_distance - wheel * WHEEL_ZOOM_STEP)
+                .clamp(MIN_FOLLOW_DISTANCE, MAX_FOLLOW_DISTANCE);
+        }
+        if let Some(digit) = input.pressed_digit() {
+            let body = digit + 1;
+            if body < self.system.body_count() {
+                self.destination = body;
+                self.notify(format!(
+                    "DESTINO: {} - PULSA F PARA WARP",
+                    self.body_name(body)
+                ));
+            }
+        }
+        if input.was_pressed(Key::Tab) {
+            self.destination = (self.destination + 1) % self.system.body_count();
+            self.notify(format!(
+                "DESTINO: {} - PULSA F PARA WARP",
+                self.body_name(self.destination)
+            ));
+        }
+        if input.was_pressed(Key::O) {
+            self.toggle_orbit();
+        }
+        if input.was_pressed(Key::F) {
+            self.start_warp(effect);
+        }
+    }
+
+    fn toggle_orbit(&mut self) {
+        if self.warp.is_traveling() {
+            return;
+        }
+        if self.ship.is_orbiting() {
+            self.ship.leave_orbit();
+            self.notify("VUELO LIBRE");
+            return;
+        }
+        let nearest = (0..self.system.body_count())
+            .map(|index| {
+                let distance = (self.system.position(index) - self.ship.position).length();
+                (index, distance, self.system.body(index).radius)
+            })
+            .filter(|&(_, distance, radius)| Ship::can_orbit(distance, radius))
+            .min_by(|a, b| (a.1 / a.2).total_cmp(&(b.1 / b.2)));
+        match nearest {
+            Some((body, _, radius)) => {
+                self.ship
+                    .enter_orbit(body, self.system.position(body), radius);
+                self.notify(format!(
+                    "ORBITANDO {} - W/S VELOCIDAD, ESPACIO/CTRL ALTURA",
+                    self.body_name(body)
+                ));
+            }
+            None => self.notify("ACERCATE A UN PLANETA PARA ORBITAR"),
+        }
+    }
+
+    fn start_warp(&mut self, effect: &mut WarpEffect) {
+        let target = self.destination;
+        let distance = (self.system.position(target) - self.ship.position).length();
+        if distance <= warp::safe_distance(self.system.body(target).radius) + 1.0 {
+            self.notify(format!("YA ESTAS EN {}", self.body_name(target)));
+            return;
+        }
+        if self.warp.engage(target, &mut self.ship, effect) {
+            self.notify(format!("WARP HACIA {}", self.body_name(target)));
+        } else if !self.warp.is_traveling() {
+            self.notify("WARP RECARGANDO");
+        }
+    }
+
+    fn fly(&mut self, controls: &ShipControls, delta_time: f32) {
+        match self.ship.mode {
+            FlightMode::Free => self.ship.update_free(controls, delta_time),
+            FlightMode::Orbit { body, .. } => {
+                let center = self.system.position(body);
+                let displacement = self.system.displacement(body);
+                let radius = self.system.body(body).radius;
+                self.ship
+                    .update_orbit(controls, center, displacement, radius, delta_time);
+            }
+        }
+    }
+
+    fn follow_ship(&self, camera: &mut Camera, delta_time: f32) {
+        let (forward, distance, look_ahead) = match self.ship.orbit_body() {
+            Some(body) => {
+                let to_center = self.system.position(body) - self.ship.position;
+                (
+                    (self.ship.forward() + to_center.normalize() * ORBIT_CAMERA_TILT).normalize(),
+                    self.follow_distance * ORBIT_CAMERA_DISTANCE_FACTOR,
+                    to_center.length() * ORBIT_CAMERA_LOOK_RATIO,
+                )
+            }
+            None => (self.ship.forward(), self.follow_distance, FOLLOW_LOOK_AHEAD),
+        };
+        camera.follow(
+            self.ship.position,
+            forward,
+            self.ship.up(),
+            distance,
+            distance * FOLLOW_HEIGHT_RATIO,
+            look_ahead,
+            FOLLOW_SMOOTHING,
+            delta_time,
+        );
+    }
+
+    fn fly_free_camera(&self, camera: &mut Camera, controls: &ShipControls, delta_time: f32) {
+        camera.rotate(
+            controls.yaw * FREE_CAMERA_YAW_RATE * delta_time,
+            controls.pitch * FREE_CAMERA_PITCH_RATE * delta_time,
+            controls.roll * FREE_CAMERA_ROLL_RATE * delta_time,
+        );
+        let speed = if controls.boost {
+            FREE_CAMERA_BOOST
+        } else {
+            FREE_CAMERA_SPEED
+        } * delta_time;
+        camera.move_local(controls.thrust * speed, 0.0, controls.vertical * speed);
+    }
+
+    pub fn populate(&self, scene: &mut Scene, assets: &AssetManager) {
+        scene.clear();
+        for index in 0..self.system.body_count() {
+            let body = self.system.body(index);
+            let state = self.system.state(index);
+            let model = self.models.bodies[index];
+            let unit_radius = match model {
+                Model::Lod(handle) => assets.lod_bounding_radius(handle),
+                Model::Mesh(handle) => assets.mesh_bounding_radius(handle),
+            };
+            scene.push(Entity {
+                model,
+                material: body.material,
+                transform: Transform::new(state.position)
+                    .with_rotation(state.rotation)
+                    .with_uniform_scale(body.radius),
+                radius: body.radius * unit_radius.max(1.0),
+            });
+        }
+
+        for surface in &self.surfaces {
+            let body = self.system.body(surface.body);
+            let state = self.system.state(surface.body);
+            let surface_radius = body.radius * (1.0 - surface.embed_depth);
+            for prop in &surface.props {
+                let position =
+                    state.position + rotate_vector(state.rotation, prop.direction * surface_radius);
+                let (model, material, scale) = match prop.kind {
+                    PropKind::Crystal => (self.models.crystal, self.materials.crystal, prop.scale),
+                    PropKind::Boulder => (
+                        self.models.boulder,
+                        self.materials.boulder,
+                        prop.scale * 0.6,
+                    ),
+                };
+                scene.push(Entity {
+                    model,
+                    material,
+                    transform: Transform::new(position)
+                        .with_rotation(state.rotation * prop.local_rotation())
+                        .with_uniform_scale(scale),
+                    radius: scale * 1.4,
+                });
+            }
+        }
+
+        let orbital_time = self.system.orbital_time();
+        for asteroid in &self.asteroids {
+            scene.push(Entity {
+                model: self.models.asteroid,
+                material: self.materials.asteroid,
+                transform: Transform::new(asteroid.position(orbital_time))
+                    .with_rotation(asteroid.rotation(self.time))
+                    .with_scale(asteroid.scale),
+                radius: asteroid.radius() * 1.4,
+            });
+        }
+
+        for enemy in &self.enemies {
+            let host = self.system.position(enemy.host);
+            let forward = enemy.orbit.direction_of_travel(self.time);
+            let up = enemy.orbit.offset(self.time).normalize();
+            scene.push(Entity {
+                model: Model::Mesh(self.models.enemy),
+                material: self.materials.enemy,
+                transform: Transform::new(host + enemy.orbit.offset(self.time))
+                    .with_rotation(
+                        basis_rotation(forward, up) * Mat4::rotation_y(MODEL_FORWARD_CORRECTION),
+                    )
+                    .with_uniform_scale(enemy.scale),
+                radius: enemy.scale,
+            });
+        }
+
+        scene.push(Entity {
+            model: Model::Mesh(self.models.ship),
+            material: self.materials.ship,
+            transform: Transform::new(self.ship.position)
+                .with_rotation(self.ship.rotation() * Mat4::rotation_y(MODEL_FORWARD_CORRECTION))
+                .with_uniform_scale(SHIP_RADIUS),
+            radius: SHIP_RADIUS,
+        });
+    }
+
+    pub fn queue_lines(&self, renderer: &mut Renderer) {
+        for index in 0..self.system.body_count() {
+            let Some(path) = self.system.orbit_path(index, ORBIT_SEGMENTS) else {
+                continue;
+            };
+            let color = if index == self.destination {
+                DESTINATION_COLOR
+            } else {
+                ORBIT_COLOR
+            };
+            for segment in path.windows(2).step_by(2) {
+                renderer.draw_line_3d(segment[0], segment[1], color, false);
+            }
+        }
+    }
+
+    pub fn hud_info(&self) -> HudInfo {
+        let flight_mode = if self.warp.is_traveling() {
+            "WARP".to_owned()
+        } else {
+            match self.ship.mode {
+                FlightMode::Free => "LIBRE".to_owned(),
+                FlightMode::Orbit { body, .. } => format!("ORBITA {}", self.body_name(body)),
+            }
+        };
+        let destination_center = self.system.position(self.destination);
+        HudInfo {
+            speed: self.ship.speed(),
+            flight_mode,
+            camera_mode: match self.camera_mode {
+                CameraMode::Follow => "SEGUIR",
+                CameraMode::Free => "LIBRE",
+            },
+            destination_number: self.destination,
+            destination_name: self.body_name(self.destination),
+            destination_distance: (destination_center - self.ship.position).length()
+                - self.system.body(self.destination).radius,
+            warp_status: match self.warp.state() {
+                WarpState::Ready => "LISTO",
+                WarpState::Traveling { .. } => "ACTIVO",
+                WarpState::Cooldown { .. } => "RECARGA",
+            },
+            body_count: self.system.body_count(),
+            time_scale: self.system.config.time_scale,
+            notice: self.notice.as_ref().map(|(message, _)| message.clone()),
+            show_help: self.show_help,
+        }
+    }
+
+    pub fn light_position(&self) -> Vec3 {
+        self.system.sun_position()
+    }
+}
+
+pub fn ship_controls(input: &InputState) -> ShipControls {
+    let mouse = if input.is_button_held(MouseButton::Right) {
+        input.mouse_delta() * MOUSE_SENSITIVITY
+    } else {
+        Default::default()
+    };
+    ShipControls {
+        thrust: input.axis(Key::W, Key::S),
+        vertical: input.axis(Key::Space, Key::LeftControl),
+        yaw: (input.axis(Key::A, Key::D) + input.axis(Key::Left, Key::Right) - mouse.x)
+            .clamp(-1.0, 1.0),
+        pitch: (input.axis(Key::Up, Key::Down) - mouse.y).clamp(-1.0, 1.0),
+        roll: input.axis(Key::E, Key::Q),
+        boost: input.is_held(Key::LeftShift),
+    }
+}

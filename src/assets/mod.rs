@@ -5,4 +5,4 @@ pub mod obj_loader;
 
 pub use manager::AssetManager;
 pub use material::MaterialHandle;
-pub use mesh::MeshHandle;
+pub use mesh::{LodHandle, MeshHandle};
