@@ -616,9 +616,28 @@ fn shade_eta_player(input: &ShadeInput) -> Surface {
     color = mix(color, r2_blue, r2 * 0.96);
     color = mix(color, Vec3::new(0.78, 0.86, 0.94), r2_highlight * 0.48);
 
+    // Dos propulsores emisivos en la parte trasera. El halo amplio evita que
+    // la nave se pierda por completo en el dithering cuando queda de espaldas
+    // al Sol, mientras que el pulso suave le da un poco de movimiento.
+    let rear = smoothstep(0.74, 0.94, -point.z);
+    let engine_distance = |center_x: f32| {
+        let dx = point.x - center_x;
+        let dy = point.y - 0.085;
+        dx * dx + dy * dy
+    };
+    let distance = engine_distance(-0.105).min(engine_distance(0.105));
+    let thruster_core = rear * (1.0 - smoothstep(0.0012, 0.0038, distance));
+    let thruster_halo = rear * (1.0 - smoothstep(0.0038, 0.0120, distance));
+    let thruster = thruster_core.max(thruster_halo * 0.58);
+    let thruster_pulse = 0.82 + 0.18 * (input.time * 5.2).sin().abs();
+    let thruster_glow = thruster * thruster_pulse;
+    let thruster_blue = Vec3::new(0.08, 0.62, 1.0);
+    color = mix(color, thruster_blue, thruster_glow * 0.92);
+
     let light = lit_intensity(input);
     let intensity =
-        (light * (0.42 + panel * 0.46) + panel_detail * 0.08 + r2 * 0.16).clamp(0.16, 0.88);
+        (light * (0.42 + panel * 0.46) + panel_detail * 0.08 + r2 * 0.16 + thruster_glow * 0.88)
+            .clamp(0.16, 1.0);
     Surface { color, intensity }
 }
 
