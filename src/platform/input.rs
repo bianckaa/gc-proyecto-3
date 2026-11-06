@@ -31,10 +31,11 @@ pub enum Key {
     Minus,
     Equal,
     Escape,
+    Enter,
 }
 
 impl Key {
-    pub const ALL: [Key; 28] = [
+    pub const ALL: [Key; 29] = [
         Key::W,
         Key::A,
         Key::S,
@@ -63,6 +64,7 @@ impl Key {
         Key::Minus,
         Key::Equal,
         Key::Escape,
+        Key::Enter,
     ];
 
     pub const DIGITS: [Key; 5] = [
@@ -103,6 +105,7 @@ impl Key {
             Key::Minus => KeyboardKey::KEY_MINUS,
             Key::Equal => KeyboardKey::KEY_EQUAL,
             Key::Escape => KeyboardKey::KEY_ESCAPE,
+            Key::Enter => KeyboardKey::KEY_ENTER,
         }
     }
 }

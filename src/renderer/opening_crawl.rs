@@ -13,7 +13,7 @@ pub const PRELUDE: [&str; 2] = [
 
 pub const TITLE: [&str; 2] = ["SISTEMA", "SOLAR"];
 
-pub const CRAWL: [&str; 23] = [
+pub const CRAWL: [&str; 21] = [
     "PROYECTO III",
     "EL RENDERER DE SOFTWARE",
     "",
@@ -35,8 +35,6 @@ pub const CRAWL: [&str; 23] = [
     "Y DEMOSTRAR QUE NO SE NECESITA",
     "UNA GPU PARA ALCANZAR LAS",
     "ESTRELLAS....",
-    "",
-    "",
 ];
 
 const PRELUDE_COLOR: Color = Color::new(75, 213, 238);
@@ -55,16 +53,16 @@ const TITLE_SHRINK_RATE: f32 = 0.45;
 const TITLE_LINE_ROWS: f32 = 9.0;
 
 const CRAWL_START: f32 = 9.0;
-const CRAWL_SPEED: f32 = 0.3;
+const CRAWL_SPEED: f32 = 0.35;
 const CRAWL_EYE_HEIGHT: f32 = 1.0;
 const CRAWL_LOOK_DISTANCE: f32 = 6.0;
 const CRAWL_FOV_DEGREES: f32 = 50.0;
 const CRAWL_ENTRY_DISTANCE: f32 = 1.3;
-const CRAWL_CELL_WIDTH: f32 = 0.012;
-const CRAWL_CELL_DEPTH: f32 = 0.03;
-const CRAWL_LINE_SPACING: f32 = 0.3;
-const CRAWL_FADE_START: f32 = 5.0;
-const CRAWL_FADE_END: f32 = 9.0;
+const CRAWL_CELL_WIDTH: f32 = 0.013;
+const CRAWL_CELL_DEPTH: f32 = 0.05;
+const CRAWL_LINE_SPACING: f32 = 0.5;
+const CRAWL_FADE_START: f32 = 2.6;
+const CRAWL_FADE_END: f32 = 4.6;
 const NEAR_PLANE: f32 = 0.05;
 const FAR_PLANE: f32 = 100.0;
 
