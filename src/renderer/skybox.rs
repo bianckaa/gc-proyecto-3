@@ -14,9 +14,9 @@ const NEBULA_BLUE: Vec3 = Vec3::new(0.08, 0.16, 0.45);
 const NEBULA_PURPLE_SCALE: f32 = 1.8;
 const NEBULA_BLUE_SCALE: f32 = 2.6;
 const NEBULA_BLUE_OFFSET: Vec3 = Vec3::new(17.3, -4.1, 9.7);
-const NEBULA_THRESHOLD: f32 = 0.42;
+const NEBULA_THRESHOLD: f32 = 0.5;
 const NEBULA_SOFTNESS: f32 = 0.38;
-const NEBULA_STRENGTH: f32 = 0.55;
+const NEBULA_STRENGTH: f32 = 0.32;
 
 struct Star {
     direction: Vec3,
