@@ -59,6 +59,7 @@ pub struct BodyState {
 pub struct SolarSystem {
     pub config: SystemConfig,
     orbital_time: f32,
+    origin: Vec3,
     states: Vec<BodyState>,
     previous_positions: Vec<Vec3>,
 }
@@ -262,6 +263,20 @@ impl SystemConfig {
         config.belt.max_size *= BODY_SCALE;
         config
     }
+
+    /// Keeps only the central Sun for a run. Planets and other gameplay
+    /// content are supplied by the procedural run generator instead of the
+    /// fixed solar system used by the menu.
+    pub fn game() -> Self {
+        const GAME_SUN_SCALE: f32 = 5.0;
+
+        let mut config = Self::standard();
+        config.bodies.truncate(1);
+        config.bodies[0].radius *= GAME_SUN_SCALE;
+        config.bodies[0].orbit_capture_radius *= GAME_SUN_SCALE;
+        config.belt.count = 0;
+        config
+    }
 }
 
 impl SolarSystem {
@@ -270,6 +285,7 @@ impl SolarSystem {
         let mut system = Self {
             config,
             orbital_time: 0.0,
+            origin: Vec3::default(),
             states: vec![
                 BodyState {
                     position: Vec3::default(),
@@ -317,11 +333,21 @@ impl SolarSystem {
         self.config.bodies[index]
             .parent
             .filter(|&parent| parent < index)
-            .map_or(Vec3::default(), |parent| self.states[parent].position)
+            .map_or(self.origin, |parent| self.states[parent].position)
     }
 
     pub fn orbital_time(&self) -> f32 {
         self.orbital_time
+    }
+
+    pub fn origin(&self) -> Vec3 {
+        self.origin
+    }
+
+    /// Moves the system anchor. Positions are recomputed on the next update so
+    /// body displacement includes this translation for orbiting entities.
+    pub fn translate_origin(&mut self, offset: Vec3) {
+        self.origin = self.origin + offset;
     }
 
     pub fn body_count(&self) -> usize {

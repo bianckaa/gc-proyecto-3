@@ -19,7 +19,7 @@ pub const RED: Color = Color::new(255, 64, 64);
 pub const NOTICE: Color = Color::new(255, 220, 120);
 pub const BLACK: Color = Color::BLACK;
 
-pub const CONTROLS: [(&str, &str); 19] = [
+pub const CONTROLS: [(&str, &str); 18] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
     ("A / D", "GIRAR; ORBITA: RODEAR"),
     ("FLECHAS", "PITCH Y GIRO"),
@@ -29,10 +29,9 @@ pub const CONTROLS: [(&str, &str); 19] = [
     ("SHIFT", "TURBO"),
     ("C", "CAMARA SEGUIR / LIBRE"),
     ("RUEDA", "DISTANCIA DE CAMARA"),
-    ("O", "ORBITAR / SOLTAR (JUEGO)"),
-    ("1 - 5", "ELEGIR PLANETA"),
-    ("TAB", "SIGUIENTE DESTINO"),
-    ("F", "WARP AL DESTINO"),
+    ("1 - 5", "ELEGIR PLANETA (MENU)"),
+    ("TAB", "SIGUIENTE DESTINO (MENU)"),
+    ("F", "WARP AL DESTINO (MENU)"),
     ("- / =", "VELOCIDAD DE ORBITAS"),
     ("I", "EDITAR SEMILLA (MENU)"),
     ("R", "SEMILLA ALEATORIA (MENU)"),
@@ -60,6 +59,15 @@ pub struct HudInfo {
 }
 
 pub fn status_line(info: &HudInfo) -> String {
+    if info.program_mode == "JUEGO" {
+        return format!(
+            "{} | SPD {:03} | VUELO {} | CAM {}",
+            info.program_mode,
+            (info.speed * SPEED_DISPLAY_FACTOR).round() as i32,
+            info.flight_mode,
+            info.camera_mode,
+        );
+    }
     format!(
         "{} | SPD {:03} | VUELO {} | CAM {} | DEST: {} {} {}U | WARP {}",
         info.program_mode,

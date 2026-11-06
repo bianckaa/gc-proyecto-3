@@ -31,10 +31,9 @@ cargo test
 | `Shift` | Turbo |
 | `C` | Cambiar entre cámara de seguimiento y cámara libre |
 | Rueda del mouse | Distancia de la cámara |
-| `O` | Entrar o salir manualmente del modo órbita durante el juego |
-| `1` a `5` | Elegir planeta destino |
-| `Tab` | Siguiente destino (incluye el Sol y la Luna) |
-| `F` | Warp al destino |
+| `1` a `5` | Elegir planeta destino en el menú |
+| `Tab` | Siguiente destino en el menú (incluye el Sol y la Luna) |
+| `F` | Warp al destino en el menú |
 | `-` / `=` | Velocidad de las órbitas en vivo |
 | `I` | Editar la semilla de la próxima partida desde el menú |
 | `R` | Generar una semilla aleatoria desde el menú |
@@ -46,7 +45,9 @@ En el menú, los planetas tienen el doble de su tamaño normal y sus órbitas es
 
 La semilla mostrada en la esquina superior izquierda determina la generación procedural de la partida. En el menú, `I` permite escribir una semilla numérica y confirmarla con `Enter`; `Backspace` borra y `Esc` cancela la edición. `R` prepara una semilla aleatoria. Reutilizar el mismo número reproduce la misma distribución procedural.
 
-Durante el juego, el sistema recupera su escala original y `O` permite activar manualmente los mismos controles de órbita cuando la nave está cerca de un planeta. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
+Durante el juego desaparece el sistema solar fijo del menú y permanece únicamente el Sol central, que comienza con cinco veces su tamaño estándar. Los planetas, recompensas y enemigos de la partida serán generados por los sistemas roguelike en lugar de reutilizar los cuerpos decorativos del menú. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
+
+La partida dura 15 minutos y el reloj permanece centrado en la parte superior. Durante ese tiempo, el Sol crece lentamente y acelera su expansión al acercarse el colapso. El Sol permanece inmóvil mientras la nave esté dentro de 300 unidades; fuera de esa zona se acerca de forma gradual y acelera únicamente a distancias extremas. La cámara mantiene margen suficiente para evitar que desaparezca durante vuelos prolongados con turbo.
 
 ## Modelos
 
@@ -82,9 +83,9 @@ Los cristales de la superficie se generan por código. Si se agrega `assets/mode
 
 1. Al iniciar, explorar el sistema ampliado del menú y acercarse a un planeta para activar su órbita automática.
 2. Salir de la órbita con una nueva orden de movimiento y volar dentro del Sol para iniciar el juego.
-3. Tras el destello blanco, pulsar `3` y luego `F` para hacer warp hacia Rocoso.
-4. Acercarse con `W` hasta ver los cristales de la superficie.
-5. Pulsar `O` para rodear el planeta y otra vez `O` para volver al vuelo libre.
+3. Tras el destello blanco, comprobar que el sistema del menú desaparece y solo permanece el Sol.
+4. Verificar que el reloj de 15 minutos aparece centrado en la parte superior.
+5. Alejarse con turbo para observar el seguimiento gradual del Sol.
 
 ## Integrantes
 

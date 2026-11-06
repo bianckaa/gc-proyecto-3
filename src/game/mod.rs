@@ -1,6 +1,7 @@
 pub mod hud;
 pub mod player;
 pub mod session;
+pub mod sun_lifecycle;
 pub mod warp;
 
 use crate::assets::material::{glowing, solid};
@@ -24,6 +25,7 @@ use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
+use sun_lifecycle::{follow_offset, radius_multiplier};
 use warp::{Destination, Warp, WarpEvent, WarpState};
 
 const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
@@ -37,7 +39,7 @@ const MODEL_FORWARD_CORRECTION: f32 = PI;
 const ENEMY_SCALE: f32 = 0.8;
 const COLLISION_MARGIN: f32 = 0.4;
 const CAMERA_RADIUS: f32 = 0.3;
-const CAMERA_FAR: f32 = 420.0;
+const CAMERA_FAR: f32 = 1_200.0;
 const MENU_CAMERA_FAR: f32 = 900.0;
 const FOLLOW_HEIGHT_RATIO: f32 = 0.36;
 const FOLLOW_LOOK_AHEAD: f32 = 9.0;
@@ -153,6 +155,7 @@ pub struct Game {
     pub session: RunSession,
     next_run_seed: u32,
     seed_input: Option<String>,
+    sun_base_radius: f32,
     asteroids: Vec<Asteroid>,
     surfaces: Vec<Surface>,
     enemies: Vec<Enemy>,
@@ -270,6 +273,7 @@ impl Game {
         let surfaces = surfaces(&system);
         let enemies = patrols(&system);
         let destination = START_DESTINATION.min(system.body_count() - 1);
+        let sun_base_radius = system.body(0).radius;
         let ship = Ship::new(
             MENU_START_POSITION,
             (system.sun_position() - MENU_START_POSITION).normalize(),
@@ -290,6 +294,7 @@ impl Game {
             session: RunSession::new(),
             next_run_seed: generate_seed(),
             seed_input: None,
+            sun_base_radius,
             asteroids,
             surfaces,
             enemies,
@@ -341,7 +346,7 @@ impl Game {
                 "MENU: VUELA DENTRO DEL SOL PARA EMPEZAR",
             ),
             ProgramMode::Game => (
-                SystemConfig::standard(),
+                SystemConfig::game(),
                 START_POSITION,
                 CAMERA_FAR,
                 "JUEGO INICIADO - PULSA H PARA VER LOS CONTROLES",
@@ -356,6 +361,7 @@ impl Game {
             }
         }
         self.seed_input = None;
+        self.sun_base_radius = config.bodies[0].radius;
         self.system = SolarSystem::new(config);
         self.asteroids = asteroid_belt(&self.system.config.belt);
         self.surfaces = surfaces(&self.system);
@@ -394,6 +400,7 @@ impl Game {
             self.ship.stop();
             self.notify("EL SOL HA COMENZADO A COLAPSAR");
         }
+        self.update_sun_lifecycle(delta_time);
         self.system.update(delta_time);
         self.refresh_colliders();
 
@@ -471,11 +478,22 @@ impl Game {
     fn refresh_colliders(&mut self) {
         self.colliders = self.system.colliders();
         let time = self.system.orbital_time();
+        let origin = self.system.origin();
         self.colliders.extend(
-            self.asteroids
-                .iter()
-                .map(|asteroid| Collider::sphere(asteroid.position(time), asteroid.radius())),
+            self.asteroids.iter().map(|asteroid| {
+                Collider::sphere(origin + asteroid.position(time), asteroid.radius())
+            }),
         );
+    }
+
+    fn update_sun_lifecycle(&mut self, delta_time: f32) {
+        if self.program_mode != ProgramMode::Game {
+            return;
+        }
+        let offset = follow_offset(self.system.sun_position(), self.ship.position, delta_time);
+        self.system.translate_origin(offset);
+        self.system.config.bodies[0].radius =
+            self.sun_base_radius * radius_multiplier(self.session.elapsed());
     }
 
     fn destination_of(&self, body: usize) -> Destination {
@@ -538,28 +556,27 @@ impl Game {
             self.follow_distance = (self.follow_distance - wheel * WHEEL_ZOOM_STEP)
                 .clamp(MIN_FOLLOW_DISTANCE, MAX_FOLLOW_DISTANCE);
         }
-        if let Some(digit) = input.pressed_digit() {
-            let body = digit + 1;
-            if body < self.system.body_count() {
-                self.destination = body;
+        if self.program_mode == ProgramMode::Menu {
+            if let Some(digit) = input.pressed_digit() {
+                let body = digit + 1;
+                if body < self.system.body_count() {
+                    self.destination = body;
+                    self.notify(format!(
+                        "DESTINO: {} - PULSA F PARA WARP",
+                        self.body_name(body)
+                    ));
+                }
+            }
+            if input.was_pressed(Key::Tab) {
+                self.destination = (self.destination + 1) % self.system.body_count();
                 self.notify(format!(
                     "DESTINO: {} - PULSA F PARA WARP",
-                    self.body_name(body)
+                    self.body_name(self.destination)
                 ));
             }
-        }
-        if input.was_pressed(Key::Tab) {
-            self.destination = (self.destination + 1) % self.system.body_count();
-            self.notify(format!(
-                "DESTINO: {} - PULSA F PARA WARP",
-                self.body_name(self.destination)
-            ));
-        }
-        if input.was_pressed(Key::O) && self.program_mode == ProgramMode::Game {
-            self.toggle_orbit();
-        }
-        if input.was_pressed(Key::F) {
-            self.start_warp(effect);
+            if input.was_pressed(Key::F) {
+                self.start_warp(effect);
+            }
         }
     }
 
@@ -608,42 +625,6 @@ impl Game {
             return true;
         }
         false
-    }
-
-    fn toggle_orbit(&mut self) {
-        if self.warp.is_traveling() {
-            return;
-        }
-        if self.ship.is_orbiting() {
-            self.menu_orbit_lockout = self.ship.orbit_body();
-            self.ship.leave_orbit();
-            self.notify("VUELO LIBRE");
-            return;
-        }
-        let first_body = usize::from(self.program_mode == ProgramMode::Menu);
-        let nearest = (first_body..self.system.body_count())
-            .map(|index| {
-                let distance = (self.system.position(index) - self.ship.position).length();
-                (
-                    index,
-                    distance,
-                    self.system.body(index).orbit_capture_radius,
-                )
-            })
-            .filter(|&(_, distance, radius)| Ship::can_orbit(distance, radius))
-            .min_by(|a, b| (a.1 / a.2).total_cmp(&(b.1 / b.2)));
-        match nearest {
-            Some((body, _, _)) => {
-                let radius = self.system.body(body).radius;
-                self.ship
-                    .enter_orbit(body, self.system.position(body), radius);
-                self.notify(format!(
-                    "ORBITANDO {} - A/D GIRAR, W ACERCAR, S ALEJAR/SALIR",
-                    self.body_name(body)
-                ));
-            }
-            None => self.notify("ACERCATE A UN PLANETA PARA ORBITAR"),
-        }
     }
 
     fn update_menu_orbit_lockout(&mut self) {
@@ -864,11 +845,12 @@ impl Game {
         }
 
         let orbital_time = self.system.orbital_time();
+        let system_origin = self.system.origin();
         for asteroid in &self.asteroids {
             scene.push(Entity {
                 model: self.models.asteroid,
                 material: self.materials.asteroid,
-                transform: Transform::new(asteroid.position(orbital_time))
+                transform: Transform::new(system_origin + asteroid.position(orbital_time))
                     .with_rotation(asteroid.rotation(self.time))
                     .with_scale(asteroid.scale),
                 radius: asteroid.radius() * 1.4,
@@ -1041,9 +1023,11 @@ mod tests {
         assert_eq!(game.program_mode, ProgramMode::Game);
         assert_eq!(game.session.state(), RunState::Playing);
         assert_ne!(game.session.seed(), 0);
+        assert_eq!(camera.far, CAMERA_FAR);
         assert_eq!(game.hud_info().objective, None);
         assert!((game.transition_flash() - 1.0).abs() < 0.001);
-        assert_eq!(game.system.body(1).orbit.radius, 17.0);
+        assert_eq!(game.system.body_count(), 1);
+        assert_eq!(game.system.body(0).name, "SOL");
     }
 
     #[test]
@@ -1068,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_seed_is_used_by_session_and_procedural_content() {
+    fn selected_seed_is_kept_by_the_run_session() {
         let (mut first, mut first_camera) = test_game();
         let (mut second, mut second_camera) = test_game();
         first.next_run_seed = 12_345;
@@ -1078,7 +1062,9 @@ mod tests {
         second.configure_mode(ProgramMode::Game, &mut second_camera);
 
         assert_eq!(first.session.seed(), 12_345);
-        assert_eq!(first.asteroids, second.asteroids);
-        assert_eq!(first.surfaces[0].props, second.surfaces[0].props);
+        assert_eq!(first.session.seed(), second.session.seed());
+        assert!(first.asteroids.is_empty());
+        assert!(first.surfaces.is_empty());
+        assert!(first.enemies.is_empty());
     }
 }
