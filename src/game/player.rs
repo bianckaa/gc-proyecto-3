@@ -15,14 +15,16 @@ const ROLL_RATE: f32 = 2.0;
 const TURN_RESPONSE: f32 = 4.0;
 const MAX_BANK: f32 = 0.55;
 const BANK_RESPONSE: f32 = 5.0;
-const ORBIT_MIN_SPEED: f32 = 1.5;
-const ORBIT_MAX_SPEED: f32 = 12.0;
-const ORBIT_DEFAULT_SPEED: f32 = 5.0;
-const ORBIT_ACCELERATION: f32 = 6.0;
-const ORBIT_CLIMB_RATE: f32 = 3.0;
-const ORBIT_MIN_ALTITUDE_FACTOR: f32 = 1.35;
-const ORBIT_MAX_ALTITUDE_FACTOR: f32 = 4.5;
-const ORBIT_ALIGN_RESPONSE: f32 = 4.0;
+const ORBIT_ANGULAR_RATE: f32 = 0.72;
+const ORBIT_ZOOM_RATE: f32 = 9.0;
+const ORBIT_RELEASE_SPEED: f32 = 5.0;
+const ORBIT_MIN_ALTITUDE_FACTOR: f32 = 1.45;
+const ORBIT_EXIT_ALTITUDE_FACTOR: f32 = 2.8;
+const ORBIT_EXIT_MARGIN: f32 = 2.0;
+const ORBIT_GRAB_RADIUS_FACTOR: f32 = 2.35;
+const ORBIT_GRAB_MARGIN: f32 = 1.5;
+const ORBIT_ALIGN_RESPONSE: f32 = 3.2;
+const ORBIT_ENTRY_RESPONSE: f32 = 2.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShipControls {
@@ -40,7 +42,8 @@ pub enum FlightMode {
     Orbit {
         body: usize,
         altitude: f32,
-        speed: f32,
+        height: f32,
+        transition: f32,
     },
 }
 
@@ -97,6 +100,13 @@ impl Ship {
         match self.mode {
             FlightMode::Orbit { body, .. } => Some(body),
             FlightMode::Free => None,
+        }
+    }
+
+    pub fn orbit_transition(&self) -> f32 {
+        match self.mode {
+            FlightMode::Orbit { transition, .. } => transition,
+            FlightMode::Free => 0.0,
         }
     }
 
@@ -167,30 +177,28 @@ impl Ship {
     }
 
     pub fn enter_orbit(&mut self, body: usize, center: Vec3, body_radius: f32) {
-        let altitude = (self.position - center).length().clamp(
-            body_radius * ORBIT_MIN_ALTITUDE_FACTOR,
-            body_radius * ORBIT_MAX_ALTITUDE_FACTOR,
-        );
-        let speed = self
-            .velocity
+        let offset = self.position - center;
+        let altitude = Vec3::new(offset.x, 0.0, offset.z)
             .length()
-            .clamp(ORBIT_DEFAULT_SPEED, ORBIT_MAX_SPEED);
+            .max(body_radius * ORBIT_MIN_ALTITUDE_FACTOR);
+        self.stop();
         self.mode = FlightMode::Orbit {
             body,
             altitude,
-            speed,
+            height: offset.y,
+            transition: 0.0,
         };
     }
 
     pub fn leave_orbit(&mut self) {
-        if let FlightMode::Orbit { speed, .. } = self.mode {
-            self.velocity = self.forward * speed;
+        if self.is_orbiting() && self.velocity.length() < ORBIT_RELEASE_SPEED {
+            self.velocity = self.forward * ORBIT_RELEASE_SPEED;
         }
         self.mode = FlightMode::Free;
     }
 
     pub fn can_orbit(distance_to_center: f32, body_radius: f32) -> bool {
-        distance_to_center <= body_radius * ORBIT_MAX_ALTITUDE_FACTOR + 6.0
+        distance_to_center <= body_radius * ORBIT_GRAB_RADIUS_FACTOR + ORBIT_GRAB_MARGIN
     }
 
     pub fn update_orbit(
@@ -199,39 +207,67 @@ impl Ship {
         center: Vec3,
         center_displacement: Vec3,
         body_radius: f32,
+        orbit_capture_radius: f32,
         delta_time: f32,
-    ) {
+    ) -> bool {
         let FlightMode::Orbit {
             body,
             mut altitude,
-            mut speed,
+            height,
+            mut transition,
         } = self.mode
         else {
-            return;
+            return false;
         };
         self.position = self.position + center_displacement;
-        speed = (speed + controls.thrust * ORBIT_ACCELERATION * delta_time)
-            .clamp(ORBIT_MIN_SPEED, ORBIT_MAX_SPEED);
-        altitude = (altitude + controls.vertical * ORBIT_CLIMB_RATE * delta_time).clamp(
-            body_radius * ORBIT_MIN_ALTITUDE_FACTOR,
-            body_radius * ORBIT_MAX_ALTITUDE_FACTOR,
-        );
+        transition += (1.0 - transition) * exponential_blend(ORBIT_ENTRY_RESPONSE, delta_time);
 
-        let radial = (self.position - center).normalize();
-        let heading = rotate_around(self.forward, radial, controls.yaw * YAW_RATE * delta_time);
-        let tangent = (heading - radial * heading.dot(radial)).normalize();
-        let target_altitude = center + radial * altitude;
+        let minimum_altitude = body_radius * ORBIT_MIN_ALTITUDE_FACTOR;
+        let exit_altitude = (orbit_capture_radius * ORBIT_EXIT_ALTITUDE_FACTOR + ORBIT_EXIT_MARGIN)
+            .max(minimum_altitude + ORBIT_EXIT_MARGIN);
+        altitude -= controls.thrust * ORBIT_ZOOM_RATE * transition * delta_time;
+        if controls.thrust < 0.0 && altitude >= exit_altitude {
+            let offset = self.position - center;
+            let outward = Vec3::new(offset.x, 0.0, offset.z).normalize();
+            self.velocity = outward * ORBIT_RELEASE_SPEED;
+            self.mode = FlightMode::Free;
+            return true;
+        }
+        altitude = altitude.clamp(minimum_altitude, exit_altitude);
+
+        let offset = self.position - center;
+        let horizontal = Vec3::new(offset.x, 0.0, offset.z);
+        let radial = if horizontal.length() > f32::EPSILON {
+            horizontal.normalize()
+        } else {
+            let forward = Vec3::new(self.forward.x, 0.0, self.forward.z);
+            if forward.length() > f32::EPSILON {
+                forward.normalize()
+            } else {
+                Vec3::new(0.0, 0.0, 1.0)
+            }
+        };
+        let world_up = Vec3::new(0.0, 1.0, 0.0);
+        let angle = controls.yaw * ORBIT_ANGULAR_RATE * transition * delta_time;
+        let new_radial = rotate_around(radial, world_up, angle).normalize();
         let previous = self.position;
-        let moved = target_altitude + tangent * (speed * delta_time);
-        self.position = center + (moved - center).normalize() * altitude;
-        let new_radial = (self.position - center).normalize();
-        let new_tangent = (tangent - new_radial * tangent.dot(new_radial)).normalize();
+        self.position = center + new_radial * altitude + world_up * height;
 
-        let blend = exponential_blend(ORBIT_ALIGN_RESPONSE, delta_time);
-        let up = self.up + (new_radial - self.up) * blend;
-        self.set_orientation(new_tangent, up);
-        let target_bank = controls.yaw * MAX_BANK;
-        self.bank += (target_bank - self.bank) * exponential_blend(BANK_RESPONSE, delta_time);
+        let base_tangent = world_up.cross(new_radial).normalize();
+        let projected_forward = Vec3::new(self.forward.x, 0.0, self.forward.z).normalize();
+        let target_forward = if controls.yaw.abs() > f32::EPSILON {
+            base_tangent * controls.yaw.signum()
+        } else if projected_forward.length() > 0.5 {
+            projected_forward
+        } else {
+            base_tangent
+        };
+
+        let blend = exponential_blend(ORBIT_ALIGN_RESPONSE, delta_time) * transition;
+        let up = self.up + (world_up - self.up) * blend;
+        let forward = self.forward + (target_forward - self.forward) * blend;
+        self.set_orientation(forward, up);
+        self.bank += (0.0 - self.bank) * exponential_blend(BANK_RESPONSE, delta_time);
         self.angular_velocity = Vec3::default();
         if delta_time > 0.0 {
             self.velocity = (self.position - previous) * (1.0 / delta_time);
@@ -239,7 +275,9 @@ impl Ship {
         self.mode = FlightMode::Orbit {
             body,
             altitude,
-            speed,
+            height,
+            transition,
         };
+        false
     }
 }

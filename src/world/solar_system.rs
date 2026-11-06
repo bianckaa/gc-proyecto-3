@@ -32,6 +32,7 @@ pub struct BodyConfig {
     pub model: BodyModel,
     pub material: Material,
     pub radius: f32,
+    pub orbit_capture_radius: f32,
     pub collision_scale: f32,
     pub flattening: f32,
     pub parent: Option<usize>,
@@ -86,6 +87,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 7.0,
+                    orbit_capture_radius: 7.0,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: None,
@@ -103,6 +105,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 1.6,
+                    orbit_capture_radius: 1.6,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -120,6 +123,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 2.8,
+                    orbit_capture_radius: 2.8,
                     collision_scale: 0.78,
                     flattening: 1.0,
                     parent: Some(0),
@@ -139,6 +143,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 3.2,
+                    orbit_capture_radius: 3.2,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -165,6 +170,7 @@ impl SystemConfig {
                         false,
                     ),
                     radius: 4.6,
+                    orbit_capture_radius: 4.6,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -182,6 +188,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 6.0,
+                    orbit_capture_radius: 6.0,
                     collision_scale: 0.95,
                     flattening: 0.36,
                     parent: Some(0),
@@ -194,6 +201,7 @@ impl SystemConfig {
                     model: BodyModel::Sphere,
                     material: material(Vec3::new(0.25, 0.75, 1.0), none, ShaderKind::Toon, true),
                     radius: 1.0,
+                    orbit_capture_radius: 1.0,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(4),
@@ -230,16 +238,21 @@ impl SystemConfig {
     /// The game keeps the original proportions, while the menu favors
     /// readability and gives the ship more room to explore each body.
     pub fn menu() -> Self {
-        const ORBIT_SCALE: f32 = 2.0;
-        const BODY_SCALE: f32 = 1.6;
+        const ORBIT_SCALE: f32 = 3.0;
+        const BODY_SCALE: f32 = 2.0;
+        const FEATURED_BODY_SCALE: f32 = 1.5;
 
         let mut config = Self::standard();
         for body in &mut config.bodies {
             body.radius *= BODY_SCALE;
+            body.orbit_capture_radius *= BODY_SCALE;
             body.orbit.radius *= ORBIT_SCALE;
             if let Some(surface) = &mut body.surface {
                 surface.min_scale *= BODY_SCALE;
                 surface.max_scale *= BODY_SCALE;
+            }
+            if matches!(body.name, "NUCLEO" | "DROIDE") {
+                body.radius *= FEATURED_BODY_SCALE;
             }
         }
         config.belt.inner_radius *= ORBIT_SCALE;

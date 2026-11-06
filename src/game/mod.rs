@@ -28,9 +28,9 @@ const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
 const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
 const ENEMY_MODEL_FILE: &str = "ENEMY1.obj";
 const SURFACE_CRYSTAL_FILE: &str = "crystal.obj";
-const ORBIT_CAMERA_DISTANCE_FACTOR: f32 = 1.6;
-const ORBIT_CAMERA_TILT: f32 = 1.0;
-const ORBIT_CAMERA_LOOK_RATIO: f32 = 0.7;
+const ORBIT_CAMERA_DISTANCE_FACTOR: f32 = 1.25;
+const ORBIT_CAMERA_HEIGHT_RATIO: f32 = 0.22;
+const ORBIT_CAMERA_SMOOTHING: f32 = 3.2;
 const MODEL_FORWARD_CORRECTION: f32 = PI;
 const ENEMY_SCALE: f32 = 0.8;
 const COLLISION_MARGIN: f32 = 0.4;
@@ -159,7 +159,6 @@ pub struct Game {
     quit_requested: bool,
     time: f32,
     start_transition: StartTransition,
-    menu_orbit_release_armed: bool,
     menu_orbit_lockout: Option<usize>,
 }
 
@@ -280,7 +279,6 @@ impl Game {
             quit_requested: false,
             time: 0.0,
             start_transition: StartTransition::Idle,
-            menu_orbit_release_armed: false,
             menu_orbit_lockout: None,
         };
         game.notify_for(
@@ -333,7 +331,6 @@ impl Game {
         self.show_help = false;
         self.follow_distance = DEFAULT_FOLLOW_DISTANCE;
         self.colliders.clear();
-        self.menu_orbit_release_armed = false;
         self.menu_orbit_lockout = None;
         camera.far = camera_far;
         camera.position = self.ship.position - self.ship.forward() * DEFAULT_FOLLOW_DISTANCE
@@ -381,7 +378,6 @@ impl Game {
         } else {
             let destination = self.destination_of(self.destination);
             self.warp.update(delta_time, &mut self.ship, destination);
-            self.prepare_menu_orbit_exit(&ship_controls);
             self.fly(&ship_controls, delta_time);
             let first_body = usize::from(self.program_mode == ProgramMode::Menu);
             let obstacles = if self.ship.is_orbiting() {
@@ -526,7 +522,6 @@ impl Game {
         }
         if self.ship.is_orbiting() {
             self.menu_orbit_lockout = self.ship.orbit_body();
-            self.menu_orbit_release_armed = false;
             self.ship.leave_orbit();
             self.notify("VUELO LIBRE");
             return;
@@ -535,37 +530,25 @@ impl Game {
         let nearest = (first_body..self.system.body_count())
             .map(|index| {
                 let distance = (self.system.position(index) - self.ship.position).length();
-                (index, distance, self.system.body(index).radius)
+                (
+                    index,
+                    distance,
+                    self.system.body(index).orbit_capture_radius,
+                )
             })
             .filter(|&(_, distance, radius)| Ship::can_orbit(distance, radius))
             .min_by(|a, b| (a.1 / a.2).total_cmp(&(b.1 / b.2)));
         match nearest {
-            Some((body, _, radius)) => {
+            Some((body, _, _)) => {
+                let radius = self.system.body(body).radius;
                 self.ship
                     .enter_orbit(body, self.system.position(body), radius);
-                self.menu_orbit_release_armed = false;
                 self.notify(format!(
-                    "ORBITANDO {} - W/S VELOCIDAD, ESPACIO/CTRL ALTURA",
+                    "ORBITANDO {} - A/D GIRAR, W ACERCAR, S ALEJAR/SALIR",
                     self.body_name(body)
                 ));
             }
             None => self.notify("ACERCATE A UN PLANETA PARA ORBITAR"),
-        }
-    }
-
-    fn prepare_menu_orbit_exit(&mut self, controls: &ShipControls) {
-        if self.program_mode != ProgramMode::Menu || !self.ship.is_orbiting() {
-            return;
-        }
-        if menu_departure_requested(controls) {
-            if self.menu_orbit_release_armed {
-                self.menu_orbit_lockout = self.ship.orbit_body();
-                self.menu_orbit_release_armed = false;
-                self.ship.leave_orbit();
-                self.notify("ORBITA LIBERADA - ALEJATE PARA VOLVER A ACTIVARLA");
-            }
-        } else {
-            self.menu_orbit_release_armed = true;
         }
     }
 
@@ -574,7 +557,7 @@ impl Game {
             return;
         };
         let distance = (self.system.position(body) - self.ship.position).length();
-        let radius = self.system.body(body).radius;
+        let radius = self.system.body(body).orbit_capture_radius;
         if !Ship::can_orbit(distance, radius) {
             self.menu_orbit_lockout = None;
         }
@@ -590,18 +573,18 @@ impl Game {
         let nearest = (1..self.system.body_count())
             .map(|body| {
                 let distance = (self.system.position(body) - self.ship.position).length();
-                (body, distance, self.system.body(body).radius)
+                (body, distance, self.system.body(body).orbit_capture_radius)
             })
             .filter(|&(body, distance, radius)| {
                 self.menu_orbit_lockout != Some(body) && Ship::can_orbit(distance, radius)
             })
             .min_by(|a, b| (a.1 / a.2).total_cmp(&(b.1 / b.2)));
-        if let Some((body, _, radius)) = nearest {
+        if let Some((body, _, _)) = nearest {
+            let radius = self.system.body(body).radius;
             self.ship
                 .enter_orbit(body, self.system.position(body), radius);
-            self.menu_orbit_release_armed = false;
             self.notify(format!(
-                "ORBITA AUTOMATICA: {} - SUELTA Y VUELVE A MOVERTE PARA SALIR",
+                "ORBITA AUTOMATICA: {} - A/D GIRAR, W ACERCAR, S ALEJAR/SALIR",
                 self.body_name(body)
             ));
         }
@@ -665,32 +648,63 @@ impl Game {
                 let center = self.system.position(body);
                 let displacement = self.system.displacement(body);
                 let radius = self.system.body(body).radius;
-                self.ship
-                    .update_orbit(controls, center, displacement, radius, delta_time);
+                let capture_radius = self.system.body(body).orbit_capture_radius;
+                if self.ship.update_orbit(
+                    controls,
+                    center,
+                    displacement,
+                    radius,
+                    capture_radius,
+                    delta_time,
+                ) {
+                    if self.program_mode == ProgramMode::Menu {
+                        self.menu_orbit_lockout = Some(body);
+                    }
+                    self.notify("ORBITA LIBERADA - VUELO LIBRE");
+                }
             }
         }
     }
 
     fn follow_ship(&self, camera: &mut Camera, delta_time: f32) {
-        let (forward, distance, look_ahead) = match self.ship.orbit_body() {
+        let (forward, up, distance, height, look_ahead, smoothing) = match self.ship.orbit_body() {
             Some(body) => {
                 let to_center = self.system.position(body) - self.ship.position;
+                let orbit_forward = to_center.normalize();
+                let transition = self.ship.orbit_transition();
+                let eased = transition * transition * (3.0 - 2.0 * transition);
+                let orbit_up = if orbit_forward.y.abs() > 0.92 {
+                    Vec3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vec3::new(0.0, 1.0, 0.0)
+                };
                 (
-                    (self.ship.forward() + to_center.normalize() * ORBIT_CAMERA_TILT).normalize(),
-                    self.follow_distance * ORBIT_CAMERA_DISTANCE_FACTOR,
-                    to_center.length() * ORBIT_CAMERA_LOOK_RATIO,
+                    (self.ship.forward() * (1.0 - eased) + orbit_forward * eased).normalize(),
+                    (self.ship.up() * (1.0 - eased) + orbit_up * eased).normalize(),
+                    self.follow_distance * (1.0 + (ORBIT_CAMERA_DISTANCE_FACTOR - 1.0) * eased),
+                    self.follow_distance
+                        * (FOLLOW_HEIGHT_RATIO * (1.0 - eased) + ORBIT_CAMERA_HEIGHT_RATIO * eased),
+                    FOLLOW_LOOK_AHEAD + (to_center.length() - FOLLOW_LOOK_AHEAD) * eased,
+                    FOLLOW_SMOOTHING + (ORBIT_CAMERA_SMOOTHING - FOLLOW_SMOOTHING) * eased,
                 )
             }
-            None => (self.ship.forward(), self.follow_distance, FOLLOW_LOOK_AHEAD),
+            None => (
+                self.ship.forward(),
+                self.ship.up(),
+                self.follow_distance,
+                self.follow_distance * FOLLOW_HEIGHT_RATIO,
+                FOLLOW_LOOK_AHEAD,
+                FOLLOW_SMOOTHING,
+            ),
         };
         camera.follow(
             self.ship.position,
             forward,
-            self.ship.up(),
+            up,
             distance,
-            distance * FOLLOW_HEIGHT_RATIO,
+            height,
             look_ahead,
-            FOLLOW_SMOOTHING,
+            smoothing,
             delta_time,
         );
     }
@@ -824,6 +838,10 @@ impl Game {
                 ProgramMode::Menu => "MENU",
                 ProgramMode::Game => "JUEGO",
             },
+            objective: match self.program_mode {
+                ProgramMode::Menu => Some("OBJETIVO: VUELA DENTRO DEL SOL PARA INICIAR"),
+                ProgramMode::Game => None,
+            },
             speed: self.ship.speed(),
             flight_mode,
             camera_mode: match self.camera_mode {
@@ -869,10 +887,6 @@ impl Game {
     }
 }
 
-fn menu_departure_requested(controls: &ShipControls) -> bool {
-    controls.thrust.abs() > f32::EPSILON || controls.vertical.abs() > f32::EPSILON || controls.boost
-}
-
 pub fn ship_controls(input: &InputState) -> ShipControls {
     let mouse = if input.is_button_held(MouseButton::Right) {
         input.mouse_delta() * MOUSE_SENSITIVITY
@@ -902,29 +916,15 @@ mod tests {
     }
 
     #[test]
-    fn menu_orbit_requires_translation_input_to_release() {
-        assert!(!menu_departure_requested(&ShipControls {
-            yaw: 1.0,
-            pitch: -1.0,
-            roll: 1.0,
-            ..ShipControls::default()
-        }));
-        assert!(menu_departure_requested(&ShipControls {
-            thrust: 1.0,
-            ..ShipControls::default()
-        }));
-        assert!(menu_departure_requested(&ShipControls {
-            vertical: -1.0,
-            ..ShipControls::default()
-        }));
-    }
-
-    #[test]
     fn game_starts_in_menu_and_sun_flash_switches_to_game() {
         let (mut game, mut camera) = test_game();
         let input = InputState::new();
         let mut effect = WarpEffect::new();
         assert_eq!(game.program_mode, ProgramMode::Menu);
+        assert_eq!(
+            game.hud_info().objective,
+            Some("OBJETIVO: VUELA DENTRO DEL SOL PARA INICIAR")
+        );
 
         game.ship.position = game.system.sun_position();
         game.update(&input, 1.0 / 60.0, &mut camera, &mut effect);
@@ -935,12 +935,13 @@ mod tests {
 
         game.update(&input, START_FLASH_IN_DURATION, &mut camera, &mut effect);
         assert_eq!(game.program_mode, ProgramMode::Game);
+        assert_eq!(game.hud_info().objective, None);
         assert!((game.transition_flash() - 1.0).abs() < 0.001);
         assert_eq!(game.system.body(1).orbit.radius, 17.0);
     }
 
     #[test]
-    fn menu_planet_orbit_is_automatic_and_movement_can_release_it() {
+    fn menu_planet_orbit_is_automatic() {
         let (mut game, mut camera) = test_game();
         let input = InputState::new();
         let mut effect = WarpEffect::new();
@@ -951,13 +952,12 @@ mod tests {
 
         game.update(&input, 1.0 / 60.0, &mut camera, &mut effect);
         assert_eq!(game.ship.orbit_body(), Some(body));
+        assert_eq!(game.ship.orbit_transition(), 0.0);
 
-        game.prepare_menu_orbit_exit(&ShipControls::default());
-        game.prepare_menu_orbit_exit(&ShipControls {
-            thrust: 1.0,
-            ..ShipControls::default()
-        });
-        assert!(!game.ship.is_orbiting());
-        assert_eq!(game.menu_orbit_lockout, Some(body));
+        for _ in 0..240 {
+            game.update(&input, 1.0 / 60.0, &mut camera, &mut effect);
+        }
+        let toward_planet = (game.system.position(body) - camera.position).normalize();
+        assert!(camera.forward().dot(toward_planet) > 0.99);
     }
 }

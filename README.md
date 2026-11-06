@@ -40,9 +40,9 @@ cargo test
 | `H` | Panel de controles |
 | `Esc` | Cerrar el panel; volver al menú desde el juego; salir desde el menú |
 
-En el menú, los planetas son más grandes, sus órbitas están más separadas y la órbita se activa automáticamente al acercarse a un planeta. Para salir, suelta los controles y vuelve a pulsar `W`, `S`, `Espacio` o `Ctrl`; no se reactiva hasta alejarse. El Sol es atravesable: entrar profundamente en él produce un destello blanco e inicia el modo juego.
+En el menú, los planetas tienen el doble de su tamaño normal y sus órbitas están separadas 3×. Núcleo y Droide reciben además 1.5× de tamaño visual, pero conservan el mismo radio de captura de órbita. La órbita de inspección se activa automáticamente al acercarse lo suficiente a un planeta y la cámara transiciona suavemente hasta apuntar a su centro. Dentro de ella, `A` / `D` rodean el planeta, `W` acerca la nave y `S` la aleja; continuar alejándose libera la órbita. El Sol es atravesable: entrar profundamente en él produce un destello blanco e inicia el modo juego.
 
-Durante el juego, el sistema recupera su escala original. En su modo órbita manual, `W` / `S` cambian la velocidad, `Espacio` / `Ctrl` la altura y `A` / `D` el rumbo alrededor del planeta. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
+Durante el juego, el sistema recupera su escala original y `O` permite activar manualmente los mismos controles de órbita cuando la nave está cerca de un planeta. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
 
 ## Modelos
 

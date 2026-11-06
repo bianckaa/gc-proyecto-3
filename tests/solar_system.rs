@@ -41,6 +41,12 @@ fn menu_system_makes_bodies_larger_and_orbits_more_spacious() {
 
     for (standard_body, menu_body) in standard.bodies.iter().zip(&menu.bodies) {
         assert!(menu_body.radius > standard_body.radius);
+        assert_eq!(menu_body.orbit_capture_radius, standard_body.radius * 2.0);
+        if matches!(menu_body.name, "NUCLEO" | "DROIDE") {
+            assert!(menu_body.radius > menu_body.orbit_capture_radius);
+        } else {
+            assert_eq!(menu_body.radius, menu_body.orbit_capture_radius);
+        }
         if standard_body.parent.is_some() {
             assert!(menu_body.orbit.radius > standard_body.orbit.radius);
         }

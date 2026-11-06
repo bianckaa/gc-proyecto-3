@@ -20,8 +20,8 @@ pub const NOTICE: Color = Color::new(255, 220, 120);
 pub const BLACK: Color = Color::BLACK;
 
 pub const CONTROLS: [(&str, &str); 17] = [
-    ("W / S", "ACELERAR / FRENAR"),
-    ("A / D", "GIRAR IZQ / DER"),
+    ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
+    ("A / D", "GIRAR; ORBITA: RODEAR"),
     ("FLECHAS", "PITCH Y GIRO"),
     ("CLIC DER + MOUSE", "APUNTAR LA NAVE"),
     ("Q / E", "ROLL"),
@@ -42,6 +42,7 @@ pub const CONTROLS: [(&str, &str); 17] = [
 #[derive(Debug, Clone, PartialEq)]
 pub struct HudInfo {
     pub program_mode: &'static str,
+    pub objective: Option<&'static str>,
     pub speed: f32,
     pub flight_mode: String,
     pub camera_mode: &'static str,
@@ -106,6 +107,18 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
         )
         .centered(),
     );
+    if let Some(objective) = info.objective {
+        labels.push(
+            TextLabel::new(
+                objective,
+                WIDTH as f32 * 0.5,
+                bar_top as f32 - 20.0,
+                TEXT_SIZE,
+                NOTICE,
+            )
+            .centered(),
+        );
+    }
     labels.push(TextLabel::new(
         "H AYUDA",
         WIDTH as f32 - 46.0,
