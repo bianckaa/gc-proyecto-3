@@ -10,6 +10,7 @@ pub mod normal_map;
 pub mod obj;
 pub mod outline;
 pub mod pipeline;
+pub mod pixel_font;
 pub mod rasterizer;
 pub mod shaders;
 pub mod skybox;
