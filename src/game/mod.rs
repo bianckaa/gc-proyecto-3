@@ -1,5 +1,6 @@
 pub mod hud;
 pub mod player;
+pub mod progression;
 pub mod session;
 pub mod sun_lifecycle;
 pub mod warp;
@@ -23,6 +24,7 @@ use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
+use progression::PlayerProgression;
 use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
 use sun_lifecycle::{follow_offset, radius_multiplier};
@@ -153,6 +155,7 @@ pub struct Game {
     pub show_help: bool,
     pub show_metrics: bool,
     pub session: RunSession,
+    pub progression: PlayerProgression,
     next_run_seed: u32,
     seed_input: Option<String>,
     sun_base_radius: f32,
@@ -292,6 +295,7 @@ impl Game {
             show_help: false,
             show_metrics: false,
             session: RunSession::new(),
+            progression: PlayerProgression::new(),
             next_run_seed: generate_seed(),
             seed_input: None,
             sun_base_radius,
@@ -353,6 +357,7 @@ impl Game {
             ),
         };
         self.program_mode = mode;
+        self.progression.reset();
         match mode {
             ProgramMode::Menu => self.session.reset(),
             ProgramMode::Game => {
@@ -404,7 +409,9 @@ impl Game {
         self.system.update(delta_time);
         self.refresh_colliders();
 
-        let controls = if self.seed_input.is_some() {
+        let run_is_paused =
+            self.program_mode == ProgramMode::Game && self.session.state() != RunState::Playing;
+        let controls = if self.seed_input.is_some() || run_is_paused {
             ShipControls::default()
         } else {
             ship_controls(input)
@@ -484,6 +491,30 @@ impl Game {
                 Collider::sphere(origin + asteroid.position(time), asteroid.radius())
             }),
         );
+    }
+
+    pub fn damage_player(&mut self, amount: f32) -> bool {
+        if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing {
+            return false;
+        }
+        let destroyed = self.progression.take_damage(amount);
+        if destroyed {
+            self.session.destroy_player();
+            self.ship.stop();
+            self.notify("NAVE DESTRUIDA");
+        }
+        destroyed
+    }
+
+    pub fn grant_player_experience(&mut self, amount: u32) -> u32 {
+        if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing {
+            return 0;
+        }
+        let gain = self.progression.grant_experience(amount);
+        if gain.levels_gained > 0 {
+            self.notify(format!("NIVEL {}", self.progression.level()));
+        }
+        gain.levels_gained
     }
 
     fn update_sun_lifecycle(&mut self, delta_time: f32) {
@@ -930,6 +961,15 @@ impl Game {
                 self.next_run_seed
             },
             seed_input: self.seed_input.clone(),
+            progression: (self.program_mode == ProgramMode::Game).then(|| hud::ProgressHudInfo {
+                health: self.progression.health(),
+                max_health: self.progression.max_health(),
+                health_ratio: self.progression.health_ratio(),
+                level: self.progression.level(),
+                experience: self.progression.experience(),
+                experience_required: self.progression.experience_required(),
+                experience_ratio: self.progression.experience_ratio(),
+            }),
             speed: self.ship.speed(),
             flight_mode,
             camera_mode: match self.camera_mode {
@@ -1066,5 +1106,21 @@ mod tests {
         assert!(first.asteroids.is_empty());
         assert!(first.surfaces.is_empty());
         assert!(first.enemies.is_empty());
+    }
+
+    #[test]
+    fn player_damage_ends_the_run_and_progress_resets_on_next_run() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        game.grant_player_experience(25);
+
+        assert_eq!(game.progression.level(), 2);
+        assert!(!game.damage_player(99.0));
+        assert!(game.damage_player(1.0));
+        assert_eq!(game.session.state(), RunState::PlayerDestroyed);
+
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        assert_eq!(game.progression, PlayerProgression::new());
+        assert_eq!(game.session.state(), RunState::Playing);
     }
 }

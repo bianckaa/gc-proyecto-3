@@ -17,7 +17,12 @@ pub const SOFT_WHITE: Color = Color::new(214, 214, 214);
 pub const DIM: Color = Color::new(150, 150, 160);
 pub const RED: Color = Color::new(255, 64, 64);
 pub const NOTICE: Color = Color::new(255, 220, 120);
+pub const HEALTH: Color = Color::new(72, 220, 96);
+pub const EXPERIENCE: Color = Color::new(170, 92, 255);
 pub const BLACK: Color = Color::BLACK;
+
+const PROGRESS_BAR_WIDTH: i32 = 108;
+const PROGRESS_BAR_HEIGHT: i32 = 4;
 
 pub const CONTROLS: [(&str, &str); 18] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
@@ -41,12 +46,24 @@ pub const CONTROLS: [(&str, &str); 18] = [
 ];
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ProgressHudInfo {
+    pub health: f32,
+    pub max_health: f32,
+    pub health_ratio: f32,
+    pub level: u32,
+    pub experience: u32,
+    pub experience_required: u32,
+    pub experience_ratio: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct HudInfo {
     pub program_mode: &'static str,
     pub objective: Option<&'static str>,
     pub run_time_remaining: Option<f32>,
     pub run_seed: u32,
     pub seed_input: Option<String>,
+    pub progression: Option<ProgressHudInfo>,
     pub speed: f32,
     pub flight_mode: String,
     pub camera_mode: &'static str,
@@ -99,6 +116,9 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
     renderer.draw_crosshair(WHITE);
     renderer.draw_rect_2d(0, bar_top, WIDTH, BAR_HEIGHT, BLACK);
     renderer.draw_line_2d(0, bar_top - 1, WIDTH - 1, bar_top - 1, WHITE);
+    if let Some(progress) = &info.progression {
+        draw_progress(renderer, &mut labels, progress, bar_top);
+    }
     labels.push(TextLabel::new(
         status_line(info),
         5.0,
@@ -154,6 +174,50 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
         draw_help(renderer, &mut labels);
     }
     labels
+}
+
+fn draw_progress(
+    renderer: &mut Renderer,
+    labels: &mut Vec<TextLabel>,
+    progress: &ProgressHudInfo,
+    bar_top: i32,
+) {
+    let health_y = bar_top - 13;
+    let experience_y = bar_top - 7;
+    draw_progress_bar(renderer, 5, health_y, progress.health_ratio, HEALTH);
+    draw_progress_bar(
+        renderer,
+        5,
+        experience_y,
+        progress.experience_ratio,
+        EXPERIENCE,
+    );
+    labels.push(TextLabel::new(
+        format!("HP {:.0}/{:.0}", progress.health, progress.max_health),
+        118.0,
+        health_y as f32 - 1.0,
+        TEXT_SIZE,
+        HEALTH,
+    ));
+    labels.push(TextLabel::new(
+        format!(
+            "NV {}  XP {}/{}",
+            progress.level, progress.experience, progress.experience_required
+        ),
+        118.0,
+        experience_y as f32 - 1.0,
+        TEXT_SIZE,
+        EXPERIENCE,
+    ));
+}
+
+fn draw_progress_bar(renderer: &mut Renderer, x: i32, y: i32, ratio: f32, color: Color) {
+    renderer.draw_rect_2d(x, y, PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT, BLACK);
+    let fill = ((PROGRESS_BAR_WIDTH - 2) as f32 * ratio.clamp(0.0, 1.0)).round() as i32;
+    if fill > 0 {
+        renderer.draw_rect_2d(x + 1, y + 1, fill, PROGRESS_BAR_HEIGHT - 2, color);
+    }
+    draw_frame(renderer, x, y, PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT, DIM);
 }
 
 fn draw_help(renderer: &mut Renderer, labels: &mut Vec<TextLabel>) {

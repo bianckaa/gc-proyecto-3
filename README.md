@@ -49,6 +49,8 @@ Durante el juego desaparece el sistema solar fijo del menú y permanece únicame
 
 La partida dura 15 minutos y el reloj permanece centrado en la parte superior. Durante ese tiempo, el Sol crece lentamente y acelera su expansión al acercarse el colapso. El Sol permanece inmóvil mientras la nave esté dentro de 300 unidades; fuera de esa zona se acerca de forma gradual y acelera únicamente a distancias extremas. La cámara mantiene margen suficiente para evitar que desaparezca durante vuelos prolongados con turbo.
 
+Cada partida inicia con 100 puntos de vida, nivel 1 y una barra de experiencia vacía. Vida, nivel y progreso de XP permanecen visibles sobre la barra inferior. La experiencia requerida aumenta con cada nivel; estas estadísticas se reinician al comenzar una nueva partida.
+
 ## Modelos
 
 | Archivo | Uso |
