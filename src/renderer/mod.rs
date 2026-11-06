@@ -114,6 +114,7 @@ pub struct Renderer {
     pub culling_enabled: bool,
     pub lod_enabled: bool,
     pub normal_mapping_enabled: bool,
+    pub nebula_enabled: bool,
     pub warp: WarpEffect,
     pub metrics: Metrics,
     framebuffer: Framebuffer,
@@ -136,6 +137,7 @@ impl Renderer {
             culling_enabled: true,
             lod_enabled: true,
             normal_mapping_enabled: true,
+            nebula_enabled: true,
             warp: WarpEffect::new(),
             metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
@@ -160,6 +162,9 @@ impl Renderer {
     pub fn render(&mut self, objects: &[RenderObject], camera: &Camera, time: f32) {
         self.framebuffer.clear(Color::BLACK);
         self.depth_buffer.clear();
+        if self.nebula_enabled {
+            self.skybox.draw_nebula(&mut self.framebuffer, camera);
+        }
         self.skybox.draw(&mut self.framebuffer, camera, time);
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
