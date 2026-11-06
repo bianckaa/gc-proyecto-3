@@ -68,7 +68,7 @@ fn edge(a: ScreenVertex, b: ScreenVertex, px: f32, py: f32) -> f32 {
     (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
 }
 
-fn for_each_covered_pixel(
+pub(crate) fn for_each_covered_pixel(
     width: usize,
     height: usize,
     a: ScreenVertex,

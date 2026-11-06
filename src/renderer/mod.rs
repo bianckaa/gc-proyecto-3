@@ -7,6 +7,7 @@ pub mod heat_haze;
 pub mod lighting;
 pub mod lines;
 pub mod normal_map;
+pub mod opening_crawl;
 pub mod obj;
 pub mod outline;
 pub mod pipeline;
@@ -150,6 +151,10 @@ impl Renderer {
 
     pub fn pixels(&self) -> &[u8] {
         self.framebuffer.pixels()
+    }
+
+    pub fn framebuffer_mut(&mut self) -> &mut Framebuffer {
+        &mut self.framebuffer
     }
 
     pub fn render(&mut self, objects: &[RenderObject], camera: &Camera, time: f32) {
