@@ -1,5 +1,6 @@
 pub mod hud;
 pub mod player;
+pub mod session;
 pub mod warp;
 
 use crate::assets::material::{glowing, solid};
@@ -21,6 +22,7 @@ use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
+use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
 use warp::{Destination, Warp, WarpEvent, WarpState};
 
@@ -148,6 +150,9 @@ pub struct Game {
     pub destination: usize,
     pub show_help: bool,
     pub show_metrics: bool,
+    pub session: RunSession,
+    next_run_seed: u32,
+    seed_input: Option<String>,
     asteroids: Vec<Asteroid>,
     surfaces: Vec<Surface>,
     enemies: Vec<Enemy>,
@@ -237,6 +242,26 @@ fn surfaces(system: &SolarSystem) -> Vec<Surface> {
         .collect()
 }
 
+fn apply_run_seed(config: &mut SystemConfig, seed: u32) {
+    config.belt.seed = mix_seed(seed, 0);
+    for (index, body) in config.bodies.iter_mut().enumerate() {
+        if let Some(surface) = &mut body.surface {
+            // Surface noise converts this value to spatial coordinates, so keep
+            // it bounded to avoid overflowing its integer lattice.
+            surface.seed = mix_seed(seed, index as u32 + 1) % 1_000_000;
+        }
+    }
+}
+
+fn mix_seed(seed: u32, stream: u32) -> u32 {
+    let mut value = seed ^ stream.wrapping_mul(0x9E37_79B9);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^ (value >> 16)
+}
+
 impl Game {
     pub fn new(assets: &mut AssetManager, camera: &mut Camera) -> Self {
         let system = SolarSystem::new(SystemConfig::menu());
@@ -262,6 +287,9 @@ impl Game {
             destination,
             show_help: false,
             show_metrics: false,
+            session: RunSession::new(),
+            next_run_seed: generate_seed(),
+            seed_input: None,
             asteroids,
             surfaces,
             enemies,
@@ -305,7 +333,7 @@ impl Game {
     }
 
     fn configure_mode(&mut self, mode: ProgramMode, camera: &mut Camera) {
-        let (config, start, camera_far, welcome) = match mode {
+        let (mut config, start, camera_far, welcome) = match mode {
             ProgramMode::Menu => (
                 SystemConfig::menu(),
                 MENU_START_POSITION,
@@ -320,6 +348,14 @@ impl Game {
             ),
         };
         self.program_mode = mode;
+        match mode {
+            ProgramMode::Menu => self.session.reset(),
+            ProgramMode::Game => {
+                self.session.start(self.next_run_seed);
+                apply_run_seed(&mut config, self.next_run_seed);
+            }
+        }
+        self.seed_input = None;
         self.system = SolarSystem::new(config);
         self.asteroids = asteroid_belt(&self.system.config.belt);
         self.surfaces = surfaces(&self.system);
@@ -354,10 +390,18 @@ impl Game {
         }
 
         self.handle_commands(input, camera, effect);
+        if self.program_mode == ProgramMode::Game && self.session.update(delta_time) {
+            self.ship.stop();
+            self.notify("EL SOL HA COMENZADO A COLAPSAR");
+        }
         self.system.update(delta_time);
         self.refresh_colliders();
 
-        let controls = ship_controls(input);
+        let controls = if self.seed_input.is_some() {
+            ShipControls::default()
+        } else {
+            ship_controls(input)
+        };
         let ship_controls = if self.camera_mode == CameraMode::Free {
             ShipControls::default()
         } else {
@@ -447,6 +491,9 @@ impl Game {
         camera: &mut Camera,
         effect: &mut WarpEffect,
     ) {
+        if self.handle_seed_commands(input) {
+            return;
+        }
         if input.was_pressed(Key::Escape) {
             if self.show_help {
                 self.show_help = false;
@@ -514,6 +561,53 @@ impl Game {
         if input.was_pressed(Key::F) {
             self.start_warp(effect);
         }
+    }
+
+    fn handle_seed_commands(&mut self, input: &InputState) -> bool {
+        if self.program_mode != ProgramMode::Menu {
+            return false;
+        }
+
+        if let Some(mut value) = self.seed_input.take() {
+            if input.was_pressed(Key::Escape) {
+                self.notify("EDICION DE SEMILLA CANCELADA");
+                return true;
+            }
+            if input.was_pressed(Key::Backspace) {
+                value.pop();
+            }
+            if let Some(digit) = input.pressed_numeric_digit() {
+                let candidate = format!("{}{}", value, digit);
+                if candidate.len() <= 10 && candidate.parse::<u32>().is_ok() {
+                    value = candidate;
+                }
+            }
+            if input.was_pressed(Key::Enter) {
+                if let Ok(seed) = value.parse::<u32>() {
+                    self.next_run_seed = seed;
+                    self.notify(format!("SEMILLA SELECCIONADA: {}", seed));
+                } else {
+                    self.notify("ESCRIBE AL MENOS UN DIGITO");
+                    self.seed_input = Some(value);
+                }
+                return true;
+            }
+            self.seed_input = Some(value);
+            return true;
+        }
+
+        if input.was_pressed(Key::I) {
+            self.ship.stop();
+            self.seed_input = Some(String::new());
+            self.notify("ESCRIBE LA SEMILLA Y PULSA ENTER");
+            return true;
+        }
+        if input.was_pressed(Key::R) {
+            self.next_run_seed = generate_seed();
+            self.notify(format!("NUEVA SEMILLA: {}", self.next_run_seed));
+            return true;
+        }
+        false
     }
 
     fn toggle_orbit(&mut self) {
@@ -840,8 +934,20 @@ impl Game {
             },
             objective: match self.program_mode {
                 ProgramMode::Menu => Some("OBJETIVO: VUELA DENTRO DEL SOL PARA INICIAR"),
-                ProgramMode::Game => None,
+                ProgramMode::Game => match self.session.state() {
+                    RunState::SolarCollapse => Some("COLAPSO SOLAR"),
+                    RunState::PlayerDestroyed => Some("NAVE DESTRUIDA"),
+                    _ => None,
+                },
             },
+            run_time_remaining: (self.program_mode == ProgramMode::Game)
+                .then(|| self.session.remaining()),
+            run_seed: if self.program_mode == ProgramMode::Game {
+                self.session.seed()
+            } else {
+                self.next_run_seed
+            },
+            seed_input: self.seed_input.clone(),
             speed: self.ship.speed(),
             flight_mode,
             camera_mode: match self.camera_mode {
@@ -857,8 +963,6 @@ impl Game {
                 WarpState::Traveling { .. } => "ACTIVO",
                 WarpState::Cooldown { .. } => "RECARGA",
             },
-            body_count: self.system.body_count(),
-            time_scale: self.system.config.time_scale,
             notice: self.notice.as_ref().map(|(message, _)| message.clone()),
             show_help: self.show_help,
         }
@@ -935,6 +1039,8 @@ mod tests {
 
         game.update(&input, START_FLASH_IN_DURATION, &mut camera, &mut effect);
         assert_eq!(game.program_mode, ProgramMode::Game);
+        assert_eq!(game.session.state(), RunState::Playing);
+        assert_ne!(game.session.seed(), 0);
         assert_eq!(game.hud_info().objective, None);
         assert!((game.transition_flash() - 1.0).abs() < 0.001);
         assert_eq!(game.system.body(1).orbit.radius, 17.0);
@@ -959,5 +1065,20 @@ mod tests {
         }
         let toward_planet = (game.system.position(body) - camera.position).normalize();
         assert!(camera.forward().dot(toward_planet) > 0.99);
+    }
+
+    #[test]
+    fn selected_seed_is_used_by_session_and_procedural_content() {
+        let (mut first, mut first_camera) = test_game();
+        let (mut second, mut second_camera) = test_game();
+        first.next_run_seed = 12_345;
+        second.next_run_seed = 12_345;
+
+        first.configure_mode(ProgramMode::Game, &mut first_camera);
+        second.configure_mode(ProgramMode::Game, &mut second_camera);
+
+        assert_eq!(first.session.seed(), 12_345);
+        assert_eq!(first.asteroids, second.asteroids);
+        assert_eq!(first.surfaces[0].props, second.surfaces[0].props);
     }
 }

@@ -19,7 +19,7 @@ pub const RED: Color = Color::new(255, 64, 64);
 pub const NOTICE: Color = Color::new(255, 220, 120);
 pub const BLACK: Color = Color::BLACK;
 
-pub const CONTROLS: [(&str, &str); 17] = [
+pub const CONTROLS: [(&str, &str); 19] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
     ("A / D", "GIRAR; ORBITA: RODEAR"),
     ("FLECHAS", "PITCH Y GIRO"),
@@ -34,6 +34,8 @@ pub const CONTROLS: [(&str, &str); 17] = [
     ("TAB", "SIGUIENTE DESTINO"),
     ("F", "WARP AL DESTINO"),
     ("- / =", "VELOCIDAD DE ORBITAS"),
+    ("I", "EDITAR SEMILLA (MENU)"),
+    ("R", "SEMILLA ALEATORIA (MENU)"),
     ("M", "METRICAS"),
     ("H", "MOSTRAR AYUDA"),
     ("ESC", "VOLVER AL MENU / SALIR"),
@@ -43,6 +45,9 @@ pub const CONTROLS: [(&str, &str); 17] = [
 pub struct HudInfo {
     pub program_mode: &'static str,
     pub objective: Option<&'static str>,
+    pub run_time_remaining: Option<f32>,
+    pub run_seed: u32,
+    pub seed_input: Option<String>,
     pub speed: f32,
     pub flight_mode: String,
     pub camera_mode: &'static str,
@@ -50,8 +55,6 @@ pub struct HudInfo {
     pub destination_name: &'static str,
     pub destination_distance: f32,
     pub warp_status: &'static str,
-    pub body_count: usize,
-    pub time_scale: f32,
     pub notice: Option<String>,
     pub show_help: bool,
 }
@@ -70,11 +73,9 @@ pub fn status_line(info: &HudInfo) -> String {
     )
 }
 
-pub fn system_line(info: &HudInfo) -> String {
-    format!(
-        "SISTEMA - {} CUERPOS | ORBITAS X{:.2}",
-        info.body_count, info.time_scale
-    )
+pub fn format_time(seconds: f32) -> String {
+    let total = seconds.max(0.0).ceil() as u32;
+    format!("{:02}:{:02}", total / 60, total % 60)
 }
 
 fn draw_frame(renderer: &mut Renderer, x: i32, y: i32, width: i32, height: i32, color: Color) {
@@ -97,16 +98,18 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
         TEXT_SIZE,
         SOFT_WHITE,
     ));
-    labels.push(
-        TextLabel::new(
-            system_line(info),
-            WIDTH as f32 * 0.5,
-            bar_top as f32 - 11.0,
-            TEXT_SIZE,
-            DIM,
-        )
-        .centered(),
-    );
+    if let Some(remaining) = info.run_time_remaining {
+        labels.push(
+            TextLabel::new(
+                format!("TIEMPO {}", format_time(remaining)),
+                WIDTH as f32 * 0.5,
+                5.0,
+                TEXT_SIZE,
+                WHITE,
+            )
+            .centered(),
+        );
+    }
     if let Some(objective) = info.objective {
         labels.push(
             TextLabel::new(
@@ -126,6 +129,14 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
         TEXT_SIZE,
         DIM,
     ));
+    let seed_text = match &info.seed_input {
+        Some(input) => format!("SEMILLA > {}_ | ENTER CONFIRMAR | ESC CANCELAR", input),
+        None if info.program_mode == "MENU" => {
+            format!("SEMILLA {} | I EDITAR | R ALEATORIA", info.run_seed)
+        }
+        None => format!("SEED {}", info.run_seed),
+    };
+    labels.push(TextLabel::new(seed_text, 5.0, 5.0, TEXT_SIZE, DIM));
     if let Some(notice) = &info.notice {
         labels.push(
             TextLabel::new(notice.clone(), WIDTH as f32 * 0.5, 22.0, TEXT_SIZE, NOTICE).centered(),
@@ -166,5 +177,17 @@ fn draw_help(renderer: &mut Renderer, labels: &mut Vec<TextLabel>) {
             TEXT_SIZE,
             SOFT_WHITE,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_time;
+
+    #[test]
+    fn run_time_is_displayed_as_minutes_and_seconds() {
+        assert_eq!(format_time(900.0), "15:00");
+        assert_eq!(format_time(61.2), "01:02");
+        assert_eq!(format_time(0.0), "00:00");
     }
 }

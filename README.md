@@ -36,11 +36,15 @@ cargo test
 | `Tab` | Siguiente destino (incluye el Sol y la Luna) |
 | `F` | Warp al destino |
 | `-` / `=` | Velocidad de las órbitas en vivo |
+| `I` | Editar la semilla de la próxima partida desde el menú |
+| `R` | Generar una semilla aleatoria desde el menú |
 | `M` | Métricas de rendimiento |
 | `H` | Panel de controles |
 | `Esc` | Cerrar el panel; volver al menú desde el juego; salir desde el menú |
 
 En el menú, los planetas tienen el doble de su tamaño normal y sus órbitas están separadas 3×. Núcleo y Droide reciben además 1.5× de tamaño visual, pero conservan el mismo radio de captura de órbita. La órbita de inspección se activa automáticamente al acercarse lo suficiente a un planeta y la cámara transiciona suavemente hasta apuntar a su centro. Dentro de ella, `A` / `D` rodean el planeta, `W` acerca la nave y `S` la aleja; continuar alejándose libera la órbita. El Sol es atravesable: entrar profundamente en él produce un destello blanco e inicia el modo juego.
+
+La semilla mostrada en la esquina superior izquierda determina la generación procedural de la partida. En el menú, `I` permite escribir una semilla numérica y confirmarla con `Enter`; `Backspace` borra y `Esc` cancela la edición. `R` prepara una semilla aleatoria. Reutilizar el mismo número reproduce la misma distribución procedural.
 
 Durante el juego, el sistema recupera su escala original y `O` permite activar manualmente los mismos controles de órbita cuando la nave está cerca de un planeta. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
 
