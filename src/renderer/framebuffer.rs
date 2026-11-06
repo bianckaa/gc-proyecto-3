@@ -60,6 +60,15 @@ impl Framebuffer {
         }
     }
 
+    pub fn fade_to_white(&mut self, amount: f32) {
+        let amount = amount.clamp(0.0, 1.0);
+        for pixel in self.pixels.chunks_exact_mut(BYTES_PER_PIXEL) {
+            for channel in &mut pixel[..3] {
+                *channel = (*channel as f32 + (255.0 - *channel as f32) * amount) as u8;
+            }
+        }
+    }
+
     pub fn set_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return;
@@ -85,5 +94,20 @@ impl Framebuffer {
 impl Default for Framebuffer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn white_fade_brightens_and_reaches_white() {
+        let mut framebuffer = Framebuffer::new();
+        framebuffer.clear(Color::new(20, 40, 60));
+        framebuffer.fade_to_white(0.5);
+        assert_eq!(framebuffer.get_pixel(0, 0), Color::new(137, 147, 157));
+        framebuffer.fade_to_white(1.0);
+        assert_eq!(framebuffer.get_pixel(0, 0), Color::new(255, 255, 255));
     }
 }

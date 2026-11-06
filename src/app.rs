@@ -88,7 +88,13 @@ impl App {
         if self.game.show_metrics {
             self.renderer.draw_metrics(METRICS_COLOR);
         }
-        let labels = draw_hud(&mut self.renderer, &self.game.hud_info());
+        let flash = self.game.transition_flash();
+        let labels = if flash > 0.0 {
+            Vec::new()
+        } else {
+            draw_hud(&mut self.renderer, &self.game.hud_info())
+        };
+        self.renderer.fade_to_white(flash);
         self.window.present(self.renderer.pixels(), &labels);
     }
 }

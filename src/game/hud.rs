@@ -29,18 +29,19 @@ pub const CONTROLS: [(&str, &str); 17] = [
     ("SHIFT", "TURBO"),
     ("C", "CAMARA SEGUIR / LIBRE"),
     ("RUEDA", "DISTANCIA DE CAMARA"),
-    ("O", "ORBITAR / SOLTAR PLANETA"),
+    ("O", "ORBITAR / SOLTAR (JUEGO)"),
     ("1 - 5", "ELEGIR PLANETA"),
     ("TAB", "SIGUIENTE DESTINO"),
     ("F", "WARP AL DESTINO"),
     ("- / =", "VELOCIDAD DE ORBITAS"),
     ("M", "METRICAS"),
     ("H", "MOSTRAR AYUDA"),
-    ("ESC", "CERRAR AYUDA / SALIR"),
+    ("ESC", "VOLVER AL MENU / SALIR"),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HudInfo {
+    pub program_mode: &'static str,
     pub speed: f32,
     pub flight_mode: String,
     pub camera_mode: &'static str,
@@ -56,7 +57,8 @@ pub struct HudInfo {
 
 pub fn status_line(info: &HudInfo) -> String {
     format!(
-        "SPD {:03} | MODO {} | CAM {} | DESTINO: {} {} {}U | WARP {}",
+        "{} | SPD {:03} | VUELO {} | CAM {} | DEST: {} {} {}U | WARP {}",
+        info.program_mode,
         (info.speed * SPEED_DISPLAY_FACTOR).round() as i32,
         info.flight_mode,
         info.camera_mode,

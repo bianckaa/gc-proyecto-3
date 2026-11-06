@@ -35,6 +35,21 @@ fn standard_system_has_at_least_five_distinct_bodies() {
 }
 
 #[test]
+fn menu_system_makes_bodies_larger_and_orbits_more_spacious() {
+    let standard = SystemConfig::standard();
+    let menu = SystemConfig::menu();
+
+    for (standard_body, menu_body) in standard.bodies.iter().zip(&menu.bodies) {
+        assert!(menu_body.radius > standard_body.radius);
+        if standard_body.parent.is_some() {
+            assert!(menu_body.orbit.radius > standard_body.orbit.radius);
+        }
+    }
+    assert!(menu.belt.inner_radius > standard.belt.inner_radius);
+    assert!(menu.belt.outer_radius > standard.belt.outer_radius);
+}
+
+#[test]
 fn bodies_move_with_time_and_the_moon_follows_its_planet() {
     let mut system = SolarSystem::new(SystemConfig::standard());
     let moon = system.find("LUNA").unwrap();

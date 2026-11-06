@@ -225,6 +225,30 @@ impl SystemConfig {
             light_ambient: 0.16,
         }
     }
+
+    /// Builds the more spacious solar system used by the interactive menu.
+    /// The game keeps the original proportions, while the menu favors
+    /// readability and gives the ship more room to explore each body.
+    pub fn menu() -> Self {
+        const ORBIT_SCALE: f32 = 2.0;
+        const BODY_SCALE: f32 = 1.6;
+
+        let mut config = Self::standard();
+        for body in &mut config.bodies {
+            body.radius *= BODY_SCALE;
+            body.orbit.radius *= ORBIT_SCALE;
+            if let Some(surface) = &mut body.surface {
+                surface.min_scale *= BODY_SCALE;
+                surface.max_scale *= BODY_SCALE;
+            }
+        }
+        config.belt.inner_radius *= ORBIT_SCALE;
+        config.belt.outer_radius *= ORBIT_SCALE;
+        config.belt.thickness *= BODY_SCALE;
+        config.belt.min_size *= BODY_SCALE;
+        config.belt.max_size *= BODY_SCALE;
+        config
+    }
 }
 
 impl SolarSystem {

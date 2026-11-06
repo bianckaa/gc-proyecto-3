@@ -2,7 +2,7 @@
 
 Proyecto 3 - Gráficas por Computadora
 
-Software renderer escrito en Rust que muestra un sistema solar explorable con una nave. Todo el dibujo 3D ocurre en un framebuffer propio de 480x270 píxeles; raylib solo abre la ventana, lee el teclado y el mouse, mide el tiempo, muestra el framebuffer como textura y escribe el texto del HUD.
+Software renderer escrito en Rust que muestra un sistema solar explorable con una nave. El programa inicia en un menú 3D de gran escala y entra al juego al volar dentro del Sol. Todo el dibujo 3D ocurre en un framebuffer propio de 480x270 píxeles; raylib solo abre la ventana, lee el teclado y el mouse, mide el tiempo, muestra el framebuffer como textura y escribe el texto del HUD.
 
 ## Cómo compilar y ejecutar
 
@@ -31,16 +31,18 @@ cargo test
 | `Shift` | Turbo |
 | `C` | Cambiar entre cámara de seguimiento y cámara libre |
 | Rueda del mouse | Distancia de la cámara |
-| `O` | Entrar o salir del modo órbita alrededor del planeta cercano |
+| `O` | Entrar o salir manualmente del modo órbita durante el juego |
 | `1` a `5` | Elegir planeta destino |
 | `Tab` | Siguiente destino (incluye el Sol y la Luna) |
 | `F` | Warp al destino |
 | `-` / `=` | Velocidad de las órbitas en vivo |
 | `M` | Métricas de rendimiento |
 | `H` | Panel de controles |
-| `Esc` | Cerrar el panel o salir |
+| `Esc` | Cerrar el panel; volver al menú desde el juego; salir desde el menú |
 
-En modo órbita, `W` / `S` cambian la velocidad, `Espacio` / `Ctrl` la altura y `A` / `D` el rumbo alrededor del planeta.
+En el menú, los planetas son más grandes, sus órbitas están más separadas y la órbita se activa automáticamente al acercarse a un planeta. Para salir, suelta los controles y vuelve a pulsar `W`, `S`, `Espacio` o `Ctrl`; no se reactiva hasta alejarse. El Sol es atravesable: entrar profundamente en él produce un destello blanco e inicia el modo juego.
+
+Durante el juego, el sistema recupera su escala original. En su modo órbita manual, `W` / `S` cambian la velocidad, `Espacio` / `Ctrl` la altura y `A` / `D` el rumbo alrededor del planeta. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
 
 ## Modelos
 
@@ -74,11 +76,11 @@ Los cristales de la superficie se generan por código. Si se agrega `assets/mode
 
 ## Recorrido sugerido para la demostración
 
-1. Al iniciar, la nave mira hacia el Sol desde fuera del sistema.
-2. Pulsar `3` y luego `F` para hacer warp hacia Rocoso.
-3. Acercarse con `W` hasta ver los cristales de la superficie.
-4. Pulsar `O` para rodear el planeta y otra vez `O` para volver al vuelo libre.
-5. Alejarse con `S` o con turbo y elegir otro destino con `Tab`.
+1. Al iniciar, explorar el sistema ampliado del menú y acercarse a un planeta para activar su órbita automática.
+2. Salir de la órbita con una nueva orden de movimiento y volar dentro del Sol para iniciar el juego.
+3. Tras el destello blanco, pulsar `3` y luego `F` para hacer warp hacia Rocoso.
+4. Acercarse con `W` hasta ver los cristales de la superficie.
+5. Pulsar `O` para rodear el planeta y otra vez `O` para volver al vuelo libre.
 
 ## Integrantes
 

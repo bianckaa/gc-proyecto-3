@@ -144,6 +144,10 @@ impl Renderer {
         self.framebuffer.pixels()
     }
 
+    pub fn fade_to_white(&mut self, amount: f32) {
+        self.framebuffer.fade_to_white(amount);
+    }
+
     pub fn render(&mut self, objects: &[RenderObject], camera: &Camera, time: f32) {
         self.framebuffer.clear(Color::BLACK);
         self.depth_buffer.clear();
