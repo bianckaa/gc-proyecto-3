@@ -361,6 +361,9 @@ fn main() {
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             renderer.lod_enabled = !renderer.lod_enabled;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_N) {
+            renderer.normal_mapping_enabled = !renderer.normal_mapping_enabled;
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             show_metrics = !show_metrics;
         }

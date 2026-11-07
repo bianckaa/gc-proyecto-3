@@ -19,7 +19,7 @@ pub const RED: Color = Color::new(255, 64, 64);
 pub const NOTICE: Color = Color::new(255, 220, 120);
 pub const BLACK: Color = Color::BLACK;
 
-pub const CONTROLS: [(&str, &str); 17] = [
+pub const CONTROLS: [(&str, &str); 18] = [
     ("W / S", "ACELERAR / FRENAR"),
     ("A / D", "GIRAR IZQ / DER"),
     ("FLECHAS", "PITCH Y GIRO"),
@@ -35,6 +35,7 @@ pub const CONTROLS: [(&str, &str); 17] = [
     ("F", "WARP AL DESTINO"),
     ("- / =", "VELOCIDAD DE ORBITAS"),
     ("M", "METRICAS"),
+    ("G", "GRAVEDAD"),
     ("H", "MOSTRAR AYUDA"),
     ("ESC", "CERRAR AYUDA / SALIR"),
 ];

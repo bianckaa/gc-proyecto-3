@@ -8,6 +8,7 @@ pub struct ClipVertex {
     pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
+    pub tangent: Vec3,
     pub uv: Vec2,
 }
 
@@ -18,6 +19,7 @@ impl ClipVertex {
             local_position: self.local_position + (other.local_position - self.local_position) * t,
             world_position: self.world_position +(other.world_position - self.world_position) * t,
             normal: self.normal + (other.normal - self.normal) * t,
+            tangent: self.tangent + (other.tangent - self.tangent) * t,
             uv: self.uv + (other.uv - self.uv) * t,
         }
     }
