@@ -1,3 +1,4 @@
+pub mod black_hole;
 pub mod clipping;
 pub mod culling;
 pub mod depth;
@@ -20,6 +21,7 @@ pub mod warp_effect;
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
 use crate::debug::metrics::Metrics;
+use black_hole::BlackHoleEffect;
 use culling::Frustum;
 use depth::DepthBuffer;
 use dithering::{dither, screen_door_visible};
@@ -116,6 +118,7 @@ pub struct Renderer {
     pub normal_mapping_enabled: bool,
     pub nebula_enabled: bool,
     pub warp: WarpEffect,
+    pub black_hole: BlackHoleEffect,
     pub metrics: Metrics,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
@@ -139,6 +142,7 @@ impl Renderer {
             normal_mapping_enabled: true,
             nebula_enabled: true,
             warp: WarpEffect::new(),
+            black_hole: BlackHoleEffect::new(),
             metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
@@ -157,6 +161,10 @@ impl Renderer {
 
     pub fn fade_to_white(&mut self, amount: f32) {
         self.framebuffer.fade_to_white(amount);
+    }
+
+    pub fn tint_screen(&mut self, color: Color, amount: f32) {
+        self.framebuffer.tint(color, amount);
     }
 
     pub fn framebuffer_mut(&mut self) -> &mut Framebuffer {
@@ -271,6 +279,9 @@ impl Renderer {
                 line.dashed,
             );
         }
+
+        self.black_hole
+            .apply(&mut self.framebuffer, view_projection, time);
 
         self.warp
             .apply(&mut self.framebuffer, self.skybox.visible_stars());

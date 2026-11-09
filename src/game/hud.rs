@@ -77,6 +77,7 @@ pub struct HudInfo {
     pub show_help: bool,
     pub weapons: Vec<String>,
     pub buffs: Vec<String>,
+    pub target: Option<(String, f32)>,
 }
 
 pub fn status_line(info: &HudInfo) -> String {
@@ -175,10 +176,22 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
         );
     }
     draw_loadout(&mut labels, info, bar_top);
+    if let Some((name, ratio)) = &info.target {
+        draw_target(renderer, &mut labels, name, *ratio);
+    }
     if info.show_help {
         draw_help(renderer, &mut labels);
     }
     labels
+}
+
+fn draw_target(renderer: &mut Renderer, labels: &mut Vec<TextLabel>, name: &str, ratio: f32) {
+    let x = (WIDTH - PROGRESS_BAR_WIDTH) / 2;
+    let y = 24;
+    labels.push(
+        TextLabel::new(name, WIDTH as f32 * 0.5, y as f32 - 8.0, TEXT_SIZE, RED).centered(),
+    );
+    draw_progress_bar(renderer, x, y, ratio, RED);
 }
 
 fn draw_loadout(labels: &mut Vec<TextLabel>, info: &HudInfo, bar_top: i32) {

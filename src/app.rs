@@ -98,6 +98,13 @@ impl App {
         self.game.populate(&mut self.scene, &self.assets);
         self.game.queue_lines(&mut self.renderer);
         let objects = self.scene.render_objects(&self.assets);
+        let (black_hole_center, black_hole_intensity) = self.game.black_hole();
+        self.renderer.black_hole.center = black_hole_center;
+        self.renderer.black_hole.intensity = if self.opening.is_some() {
+            0.0
+        } else {
+            black_hole_intensity
+        };
         let camera = match &self.opening {
             Some(opening) => opening.camera(&self.camera),
             None => self.camera,
@@ -112,6 +119,8 @@ impl App {
         if self.game.show_metrics {
             self.renderer.draw_metrics(METRICS_COLOR);
         }
+        let (damage_color, damage_amount) = self.game.damage_flash();
+        self.renderer.tint_screen(damage_color, damage_amount);
         let flash = self.game.transition_flash();
         let labels = if flash > 0.0 {
             Vec::new()

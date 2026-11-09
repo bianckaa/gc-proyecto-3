@@ -69,6 +69,19 @@ impl Framebuffer {
         }
     }
 
+    pub fn tint(&mut self, color: Color, amount: f32) {
+        let amount = amount.clamp(0.0, 1.0);
+        if amount <= 0.0 {
+            return;
+        }
+        let target = [color.r, color.g, color.b];
+        for pixel in self.pixels.chunks_exact_mut(BYTES_PER_PIXEL) {
+            for (channel, goal) in pixel[..3].iter_mut().zip(target) {
+                *channel = (*channel as f32 + (goal as f32 - *channel as f32) * amount) as u8;
+            }
+        }
+    }
+
     pub fn set_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return;

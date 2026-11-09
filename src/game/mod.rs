@@ -23,7 +23,7 @@ use crate::engine::math::{Mat4, Vec3};
 use crate::engine::scene::{Entity, Model, Scene};
 use crate::engine::transform::{basis_rotation, rotate_vector, Transform};
 use crate::platform::input::{InputState, Key, MouseButton};
-use crate::renderer::framebuffer::Color;
+use crate::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use crate::renderer::shaders::ShaderKind;
 use crate::renderer::warp_effect::WarpEffect;
 use crate::renderer::{Deformation, Material, Mesh, Renderer};
@@ -81,6 +81,19 @@ const WELCOME_DURATION: f32 = 7.0;
 const ORBIT_SEGMENTS: usize = 128;
 const ENEMY_EXPERIENCE: u32 = 8;
 const MAX_IMPACT_EFFECTS: usize = 8;
+const DEATH_DELAY: f32 = 2.5;
+const COLLAPSE_DURATION: f32 = 8.0;
+const COLLAPSE_PULL: f32 = 40.0;
+const COLLAPSE_MIN_SUN: f32 = 0.08;
+const DAMAGE_FLASH_DURATION: f32 = 0.35;
+const DAMAGE_FLASH_STRENGTH: f32 = 0.45;
+const INVULNERABILITY_DURATION: f32 = 0.75;
+const BLINK_RATE: f32 = 22.0;
+const LAST_MINUTE: f32 = 60.0;
+const TARGET_CONE: f32 = 0.995;
+const TARGET_RANGE: f32 = 260.0;
+const SHIELD_COLOR: Color = Color::new(90, 230, 255);
+const DAMAGE_COLOR: Color = Color::new(255, 30, 30);
 const ORBIT_COLOR: Color = Color::new(192, 80, 255);
 const DESTINATION_COLOR: Color = Color::new(92, 255, 92);
 const START_POSITION: Vec3 = Vec3::new(0.0, 10.0, 104.0);
@@ -174,6 +187,17 @@ pub struct RunStats {
     pub planets_destroyed: u32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunSummary {
+    pub cause: &'static str,
+    pub survived: f32,
+    pub level: u32,
+    pub enemies_destroyed: u32,
+    pub planets_destroyed: u32,
+    pub weapons: Vec<String>,
+    pub seed: u32,
+}
+
 pub struct Game {
     pub system: SolarSystem,
     pub ship: Ship,
@@ -202,6 +226,13 @@ pub struct Game {
     reward_random: SeededRandom,
     pending_upgrades: u32,
     roulette: Option<Roulette>,
+    ending_timer: f32,
+    ending_cause: Option<&'static str>,
+    summary: Option<RunSummary>,
+    ship_absorbed: bool,
+    damage_flash: f32,
+    invulnerable_timer: f32,
+    last_minute_warned: bool,
     planet_collider_start: usize,
     models: Models,
     materials: Materials,
@@ -367,6 +398,13 @@ impl Game {
             reward_random: SeededRandom::new(1),
             pending_upgrades: 0,
             roulette: None,
+            ending_timer: 0.0,
+            ending_cause: None,
+            summary: None,
+            ship_absorbed: false,
+            damage_flash: 0.0,
+            invulnerable_timer: 0.0,
+            last_minute_warned: false,
             planet_collider_start: 0,
             models,
             materials: Materials {
@@ -430,6 +468,13 @@ impl Game {
         self.buffs.reset();
         self.pending_upgrades = 0;
         self.roulette = None;
+        self.ending_timer = 0.0;
+        self.ending_cause = None;
+        self.summary = None;
+        self.ship_absorbed = false;
+        self.damage_flash = 0.0;
+        self.invulnerable_timer = 0.0;
+        self.last_minute_warned = false;
         self.reward_random = SeededRandom::new(self.next_run_seed ^ 0x0BAD_5EED);
         match mode {
             ProgramMode::Menu => {
@@ -485,8 +530,11 @@ impl Game {
 
         self.handle_commands(input, camera, effect);
         self.update_upgrades(input, delta_time);
+        self.update_ending(input, delta_time, camera);
         if self.program_mode == ProgramMode::Game && self.session.update(delta_time) {
             self.ship.stop();
+            self.ending_timer = 0.0;
+            self.ending_cause = Some("EL SOL COLAPSO");
             self.notify("EL SOL HA COMENZADO A COLAPSAR");
         }
         self.update_sun_lifecycle(delta_time);
@@ -496,10 +544,15 @@ impl Game {
         }
         self.refresh_colliders();
 
-        let run_is_paused =
-            self.program_mode == ProgramMode::Game && self.session.state() != RunState::Playing;
+        let run_is_paused = self.program_mode == ProgramMode::Game
+            && !matches!(
+                self.session.state(),
+                RunState::Playing | RunState::SolarCollapse
+            );
         let controls = if self.seed_input.is_some() || run_is_paused {
             ShipControls::default()
+        } else if self.session.state() == RunState::SolarCollapse {
+            scaled_controls(ship_controls(input), 1.0 - self.collapse_progress())
         } else {
             ship_controls(input)
         };
@@ -615,7 +668,148 @@ impl Game {
 
     fn simulation_frozen(&self) -> bool {
         self.program_mode == ProgramMode::Game
-            && self.session.state() == RunState::UpgradeRoulette
+            && matches!(
+                self.session.state(),
+                RunState::UpgradeRoulette | RunState::PlayerDestroyed | RunState::Summary
+            )
+    }
+
+    fn collapse_progress(&self) -> f32 {
+        if self.ending_cause == Some("EL SOL COLAPSO") {
+            (self.ending_timer / COLLAPSE_DURATION).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    fn update_ending(&mut self, input: &InputState, delta_time: f32, camera: &mut Camera) {
+        if self.program_mode != ProgramMode::Game {
+            return;
+        }
+        self.damage_flash = (self.damage_flash - delta_time).max(0.0);
+        self.invulnerable_timer = (self.invulnerable_timer - delta_time).max(0.0);
+        if !self.last_minute_warned
+            && self.session.state() == RunState::Playing
+            && self.session.remaining() <= LAST_MINUTE
+        {
+            self.last_minute_warned = true;
+            self.notify("ULTIMO MINUTO - EL SOL ESTA POR COLAPSAR");
+        }
+        match self.session.state() {
+            RunState::PlayerDestroyed => {
+                self.ending_timer += delta_time;
+                if self.ending_timer >= DEATH_DELAY {
+                    self.finish_run();
+                }
+            }
+            RunState::SolarCollapse => {
+                self.ending_timer += delta_time;
+                let progress = self.collapse_progress();
+                let sun = self.system.sun_position();
+                let to_sun = sun - self.ship.position;
+                let distance = to_sun.length();
+                if distance > f32::EPSILON {
+                    self.ship.velocity = self.ship.velocity
+                        + to_sun * (COLLAPSE_PULL * progress * progress * delta_time / distance);
+                }
+                let swallow_radius = self.system.body(0).radius * 1.6 + 6.0 * progress;
+                if !self.ship_absorbed && progress > 0.6 && distance < swallow_radius {
+                    self.ship_absorbed = true;
+                    self.effects.player_explosion(self.ship.position);
+                }
+                if progress >= 1.0 {
+                    self.finish_run();
+                }
+            }
+            RunState::Summary => {
+                if input.was_pressed(Key::Enter) {
+                    self.configure_mode(ProgramMode::Menu, camera);
+                } else if input.was_pressed(Key::R) {
+                    self.next_run_seed = self.session.seed();
+                    self.configure_mode(ProgramMode::Game, camera);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish_run(&mut self) {
+        self.summary = Some(RunSummary {
+            cause: self.ending_cause.unwrap_or("PARTIDA TERMINADA"),
+            survived: self.session.elapsed(),
+            level: self.progression.level(),
+            enemies_destroyed: self.run_stats.enemies_destroyed,
+            planets_destroyed: self.run_stats.planets_destroyed,
+            weapons: self
+                .weapons
+                .inventory
+                .owned()
+                .map(|(kind, level)| format!("{} NV{}", kind.name(), level))
+                .collect(),
+            seed: self.session.seed(),
+        });
+        self.roulette = None;
+        self.session.show_summary();
+    }
+
+    pub fn summary(&self) -> Option<&RunSummary> {
+        self.summary.as_ref()
+    }
+
+    pub fn black_hole(&self) -> (Vec3, f32) {
+        let progress = self.collapse_progress();
+        let intensity = ((progress - 0.15) / 0.6).clamp(0.0, 1.0);
+        (self.system.sun_position(), intensity * intensity * (3.0 - 2.0 * intensity))
+    }
+
+    pub fn damage_flash(&self) -> (Color, f32) {
+        let amount = self.damage_flash / DAMAGE_FLASH_DURATION * DAMAGE_FLASH_STRENGTH;
+        (DAMAGE_COLOR, amount.clamp(0.0, 1.0))
+    }
+
+    fn ship_visible(&self) -> bool {
+        if self.program_mode != ProgramMode::Game {
+            return true;
+        }
+        if self.ship_absorbed || self.ending_cause == Some("NAVE DESTRUIDA") {
+            return false;
+        }
+        self.invulnerable_timer <= 0.0 || (self.time * BLINK_RATE).sin() > 0.0
+    }
+
+    fn aimed_target(&self) -> Option<(String, f32)> {
+        if self.program_mode != ProgramMode::Game {
+            return None;
+        }
+        let origin = self.ship.position;
+        let forward = self.ship.forward();
+        let score = |position: Vec3| {
+            let offset = position - origin;
+            let distance = offset.length();
+            let alignment = offset.dot(forward) / distance.max(f32::EPSILON);
+            (distance <= TARGET_RANGE && alignment >= TARGET_CONE).then_some(distance)
+        };
+        let enemy = self
+            .run_enemies
+            .enemies()
+            .iter()
+            .filter_map(|enemy| {
+                score(enemy.position)
+                    .map(|distance| (distance, "ENEMIGO".to_owned(), enemy.health / enemy.max_health))
+            });
+        let planets = self.run_world.planets().filter_map(|planet| {
+            score(planet.position).map(|distance| {
+                (
+                    distance,
+                    format!("PLANETA {}", planet_name(planet.kind)),
+                    planet.health / planet.max_health,
+                )
+            })
+        });
+        enemy
+            .chain(planets)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, name, ratio)| (name, ratio.clamp(0.0, 1.0)))
     }
 
     fn open_roulette(&mut self) {
@@ -679,9 +873,12 @@ impl Game {
     }
 
     pub fn draw_overlays(&self, renderer: &mut Renderer) -> Vec<TextLabel> {
-        match &self.roulette {
-            Some(roulette) if self.session.state() == RunState::UpgradeRoulette => {
+        match (&self.roulette, &self.summary) {
+            (Some(roulette), _) if self.session.state() == RunState::UpgradeRoulette => {
                 roulette.draw(renderer, &self.weapons.inventory)
+            }
+            (_, Some(summary)) if self.session.state() == RunState::Summary => {
+                draw_summary(renderer, summary)
             }
             _ => Vec::new(),
         }
@@ -788,8 +985,13 @@ impl Game {
             return false;
         }
         let destroyed = self.progression.take_damage(amount);
+        self.damage_flash = DAMAGE_FLASH_DURATION;
+        self.invulnerable_timer = INVULNERABILITY_DURATION;
         if destroyed {
             self.session.destroy_player();
+            self.effects.player_explosion(self.ship.position);
+            self.ending_timer = 0.0;
+            self.ending_cause = Some("NAVE DESTRUIDA");
             self.ship.stop();
             self.notify("NAVE DESTRUIDA");
         }
@@ -812,10 +1014,15 @@ impl Game {
         if self.program_mode != ProgramMode::Game {
             return;
         }
-        let offset = follow_offset(self.system.sun_position(), self.ship.position, delta_time);
-        self.system.translate_origin(offset);
+        if self.session.state() == RunState::Playing {
+            let offset = follow_offset(self.system.sun_position(), self.ship.position, delta_time);
+            self.system.translate_origin(offset);
+        }
+        let progress = self.collapse_progress();
+        let shrink = (progress / 0.55).clamp(0.0, 1.0);
+        let contraction = 1.0 - (1.0 - COLLAPSE_MIN_SUN) * shrink * shrink * (3.0 - 2.0 * shrink);
         self.system.config.bodies[0].radius =
-            self.sun_base_radius * radius_multiplier(self.session.elapsed());
+            self.sun_base_radius * radius_multiplier(self.session.elapsed()) * contraction;
     }
 
     fn destination_of(&self, body: usize) -> Destination {
@@ -1259,6 +1466,9 @@ impl Game {
             });
         }
 
+        if !self.ship_visible() {
+            return;
+        }
         scene.push(Entity {
             model: Model::Mesh(self.models.ship),
             material: self.materials.ship,
@@ -1287,6 +1497,26 @@ impl Game {
             self.weapons.draw(renderer, self.aim(), self.time);
         }
         self.effects.draw(renderer);
+        if self.program_mode == ProgramMode::Game && self.buffs.is_shielded() && self.ship_visible() {
+            let pulse = 1.6 + (self.time * 5.0).sin() * 0.12;
+            let center = self.ship.position;
+            let axes = [
+                (self.ship.forward(), self.ship.right()),
+                (self.ship.up(), self.ship.right()),
+                (self.ship.forward(), self.ship.up()),
+            ];
+            for (u_axis, v_axis) in axes {
+                let points: Vec<Vec3> = (0..=24)
+                    .map(|index| {
+                        let angle = index as f32 / 24.0 * std::f32::consts::TAU;
+                        center + (u_axis * angle.cos() + v_axis * angle.sin()) * pulse
+                    })
+                    .collect();
+                for segment in points.windows(2).step_by(2) {
+                    renderer.draw_line_3d(segment[0], segment[1], SHIELD_COLOR, false);
+                }
+            }
+        }
     }
 
     pub fn hud_info(&self) -> HudInfo {
@@ -1355,6 +1585,7 @@ impl Game {
             } else {
                 Vec::new()
             },
+            target: self.aimed_target(),
             buffs: self
                 .buffs
                 .active()
@@ -1385,6 +1616,84 @@ impl Game {
                 amount * amount * (3.0 - 2.0 * amount)
             }
         }
+    }
+}
+
+fn draw_summary(renderer: &mut Renderer, summary: &RunSummary) -> Vec<TextLabel> {
+    const WIDTH: i32 = 260;
+    const HEIGHT: i32 = 150;
+    const TEXT: f32 = 6.0;
+    const ROW: f32 = 11.0;
+    let left = (FRAMEBUFFER_WIDTH as i32 - WIDTH) / 2;
+    let top = (FRAMEBUFFER_HEIGHT as i32 - HEIGHT) / 2 - 10;
+    let center = FRAMEBUFFER_WIDTH as f32 * 0.5;
+    let frame = Color::new(150, 150, 160);
+    renderer.draw_rect_2d(left, top, WIDTH, HEIGHT, Color::new(8, 4, 16));
+    for (x0, y0, x1, y1) in [
+        (left, top, left + WIDTH, top),
+        (left, top + HEIGHT, left + WIDTH, top + HEIGHT),
+        (left, top, left, top + HEIGHT),
+        (left + WIDTH, top, left + WIDTH, top + HEIGHT),
+    ] {
+        renderer.draw_line_2d(x0, y0, x1, y1, frame);
+    }
+    let mut labels = vec![
+        TextLabel::new("== RESULTADOS ==", center, top as f32 + 8.0, TEXT, Color::new(170, 92, 255))
+            .centered(),
+        TextLabel::new(summary.cause, center, top as f32 + 20.0, TEXT, Color::new(255, 64, 64))
+            .centered(),
+    ];
+    let rows = [
+        ("TIEMPO SOBREVIVIDO", hud::format_time(summary.survived)),
+        ("NIVEL ALCANZADO", summary.level.to_string()),
+        ("ENEMIGOS DESTRUIDOS", summary.enemies_destroyed.to_string()),
+        ("PLANETAS DESTRUIDOS", summary.planets_destroyed.to_string()),
+        ("SEMILLA", summary.seed.to_string()),
+    ];
+    let text = Color::new(214, 214, 214);
+    for (index, (label, value)) in rows.iter().enumerate() {
+        let y = top as f32 + 36.0 + index as f32 * ROW;
+        labels.push(TextLabel::new(*label, left as f32 + 14.0, y, TEXT, text));
+        labels.push(TextLabel::new(
+            value.clone(),
+            (left + WIDTH) as f32 - 70.0,
+            y,
+            TEXT,
+            Color::new(255, 220, 120),
+        ));
+    }
+    labels.push(
+        TextLabel::new(
+            format!("ARMAS: {}", summary.weapons.join("  ")),
+            center,
+            top as f32 + 36.0 + rows.len() as f32 * ROW + 4.0,
+            TEXT,
+            text,
+        )
+        .centered(),
+    );
+    labels.push(
+        TextLabel::new(
+            "ENTER VOLVER AL MENU   R REINTENTAR CON LA MISMA SEMILLA",
+            center,
+            (top + HEIGHT) as f32 - 12.0,
+            TEXT,
+            frame,
+        )
+        .centered(),
+    );
+    labels
+}
+
+fn scaled_controls(controls: ShipControls, factor: f32) -> ShipControls {
+    let factor = factor.clamp(0.0, 1.0);
+    ShipControls {
+        thrust: controls.thrust * factor,
+        vertical: controls.vertical * factor,
+        yaw: controls.yaw * factor,
+        pitch: controls.pitch * factor,
+        roll: controls.roll * factor,
+        boost: controls.boost && factor > 0.5,
     }
 }
 
@@ -1491,6 +1800,43 @@ mod tests {
         assert!(first.surfaces.is_empty());
         assert!(first.menu_patrols.is_empty());
         assert_eq!(first.run_enemies.active_count(), 0);
+    }
+
+    #[test]
+    fn death_shows_results_and_enter_returns_to_menu() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        assert!(game.damage_player(500.0));
+        assert!(!game.ship_visible());
+        let input = InputState::new();
+        for _ in 0..200 {
+            game.update_ending(&input, 1.0 / 60.0, &mut camera);
+        }
+        assert_eq!(game.session.state(), RunState::Summary);
+        let summary = game.summary().unwrap();
+        assert_eq!(summary.cause, "NAVE DESTRUIDA");
+        assert_eq!(summary.weapons, vec!["RAYO NV1".to_owned()]);
+    }
+
+    #[test]
+    fn solar_collapse_grows_a_black_hole_and_ends_the_run() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        assert!(game.session.update(session::RUN_DURATION_SECONDS + 1.0));
+        game.ending_cause = Some("EL SOL COLAPSO");
+        let radius_before = game.system.body(0).radius;
+        let input = InputState::new();
+        for _ in 0..240 {
+            game.update_ending(&input, 1.0 / 60.0, &mut camera);
+            game.update_sun_lifecycle(1.0 / 60.0);
+        }
+        assert!(game.system.body(0).radius < radius_before);
+        assert!(game.black_hole().1 > 0.5);
+        for _ in 0..400 {
+            game.update_ending(&input, 1.0 / 60.0, &mut camera);
+        }
+        assert_eq!(game.session.state(), RunState::Summary);
+        assert_eq!(game.summary().unwrap().cause, "EL SOL COLAPSO");
     }
 
     #[test]
