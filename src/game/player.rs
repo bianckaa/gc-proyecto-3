@@ -51,6 +51,7 @@ pub enum FlightMode {
 pub struct Ship {
     pub position: Vec3,
     pub velocity: Vec3,
+    pub speed_multiplier: f32,
     forward: Vec3,
     up: Vec3,
     angular_velocity: Vec3,
@@ -64,6 +65,7 @@ impl Ship {
         Self {
             position,
             velocity: Vec3::default(),
+            speed_multiplier: 1.0,
             forward: forward.normalize(),
             up: Vec3::new(
                 rotation.rows[0][1],
@@ -161,7 +163,7 @@ impl Ship {
 
     pub fn update_free(&mut self, controls: &ShipControls, delta_time: f32) {
         self.steer(controls, delta_time);
-        let thrust = if controls.boost { BOOST_THRUST } else { THRUST };
+        let thrust = if controls.boost { BOOST_THRUST } else { THRUST } * self.speed_multiplier;
         let acceleration = self.forward * (controls.thrust * thrust)
             + self.up * (controls.vertical * VERTICAL_THRUST);
         self.velocity = self.velocity + acceleration * delta_time;
@@ -170,7 +172,7 @@ impl Ship {
             MAX_BOOST_SPEED
         } else {
             MAX_SPEED
-        };
+        } * self.speed_multiplier;
         let speed = self.velocity.length();
         if speed > limit {
             let target =

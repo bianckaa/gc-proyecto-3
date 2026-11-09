@@ -1,3 +1,4 @@
+pub mod buffs;
 pub mod effects;
 pub mod enemies;
 pub mod hud;
@@ -6,6 +7,7 @@ pub mod progression;
 pub mod run_world;
 pub mod session;
 pub mod sun_lifecycle;
+pub mod upgrades;
 pub mod warp;
 pub mod wave_director;
 pub mod weapons;
@@ -28,7 +30,10 @@ use crate::world::generation::{asteroid_belt, scatter_surface, Asteroid, PropKin
 use crate::world::orbit::Orbit;
 use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
+use buffs::{ActiveBuffs, BuffKind};
 use effects::Effects;
+use upgrades::{planet_reward, Reward};
+use crate::world::generation::SeededRandom;
 use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
@@ -190,6 +195,8 @@ pub struct Game {
     run_world: RunWorld,
     effects: Effects,
     run_stats: RunStats,
+    buffs: ActiveBuffs,
+    reward_random: SeededRandom,
     planet_collider_start: usize,
     models: Models,
     materials: Materials,
@@ -351,6 +358,8 @@ impl Game {
             run_world: RunWorld::new(),
             effects: Effects::new(),
             run_stats: RunStats::default(),
+            buffs: ActiveBuffs::new(),
+            reward_random: SeededRandom::new(1),
             planet_collider_start: 0,
             models,
             materials: Materials {
@@ -411,6 +420,8 @@ impl Game {
         self.progression.reset();
         self.effects.clear();
         self.run_stats = RunStats::default();
+        self.buffs.reset();
+        self.reward_random = SeededRandom::new(self.next_run_seed ^ 0x0BAD_5EED);
         match mode {
             ProgramMode::Menu => {
                 self.session.reset();
@@ -526,6 +537,10 @@ impl Game {
         }
 
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
+            self.buffs.update(delta_time);
+        }
+        self.ship.speed_multiplier = self.buffs.multiplier(BuffKind::ShipSpeed);
+        if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
             let spawn_count = self.wave_director.update(
                 self.session.elapsed(),
                 self.run_enemies.active_count(),
@@ -597,7 +612,7 @@ impl Game {
     }
 
     fn weapon_modifiers(&self) -> Modifiers {
-        Modifiers::default()
+        self.buffs.modifiers()
     }
 
     pub fn run_stats(&self) -> RunStats {
@@ -633,8 +648,39 @@ impl Game {
     }
 
     fn reward_planet(&mut self, planet: DestroyedPlanet) {
-        self.grant_player_experience(planet_experience(planet.kind));
-        self.notify(format!("PLANETA {} DESTRUIDO", planet_name(planet.kind)));
+        let reward = planet_reward(planet.kind, &self.weapons.inventory, &mut self.reward_random);
+        let message = self.apply_reward(reward);
+        self.notify(format!(
+            "PLANETA {} DESTRUIDO - {}",
+            planet_name(planet.kind),
+            message
+        ));
+    }
+
+    fn apply_reward(&mut self, reward: Reward) -> String {
+        match reward {
+            Reward::Experience(amount) => {
+                self.grant_player_experience(amount);
+                format!("+{} XP", amount)
+            }
+            Reward::Buff(kind) => {
+                self.buffs.grant(kind);
+                format!(
+                    "{} X{:.2} {:.0}S",
+                    kind.name(),
+                    self.buffs.multiplier(kind),
+                    self.buffs.remaining(kind)
+                )
+            }
+            Reward::Improve(kind) => {
+                self.weapons.inventory.upgrade(kind);
+                format!("{} NV {}", kind.name(), self.weapons.inventory.level(kind))
+            }
+            Reward::Unlock(kind) => {
+                self.weapons.inventory.unlock(kind);
+                format!("NUEVA ARMA {}", kind.name())
+            }
+        }
     }
 
     fn refresh_colliders(&mut self) {
@@ -651,7 +697,9 @@ impl Game {
     }
 
     pub fn damage_player(&mut self, amount: f32) -> bool {
-        if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing {
+        if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing
+            || self.buffs.is_shielded()
+        {
             return false;
         }
         let destroyed = self.progression.take_damage(amount);
@@ -1212,6 +1260,22 @@ impl Game {
             },
             notice: self.notice.as_ref().map(|(message, _)| message.clone()),
             show_help: self.show_help,
+            weapons: if self.program_mode == ProgramMode::Game {
+                self.weapons
+                    .inventory
+                    .owned()
+                    .map(|(kind, level)| format!("{} NV{}", kind.name(), level))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            buffs: self
+                .buffs
+                .active()
+                .map(|(kind, stacks, remaining)| {
+                    format!("{} X{} {:.0}S", kind.name(), stacks, remaining.ceil())
+                })
+                .collect(),
         }
     }
 
@@ -1244,15 +1308,6 @@ pub fn planet_name(kind: PlanetKind) -> &'static str {
         PlanetKind::Gas => "GASEOSO",
         PlanetKind::Core => "NUCLEO",
         PlanetKind::Droid => "DROIDE",
-    }
-}
-
-fn planet_experience(kind: PlanetKind) -> u32 {
-    match kind {
-        PlanetKind::Rocky => 60,
-        PlanetKind::Gas => 30,
-        PlanetKind::Core => 30,
-        PlanetKind::Droid => 30,
     }
 }
 

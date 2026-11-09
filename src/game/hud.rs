@@ -23,6 +23,7 @@ pub const BLACK: Color = Color::BLACK;
 
 const PROGRESS_BAR_WIDTH: i32 = 108;
 const PROGRESS_BAR_HEIGHT: i32 = 4;
+const LOADOUT_LINE: f32 = 8.0;
 
 pub const CONTROLS: [(&str, &str); 19] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
@@ -74,6 +75,8 @@ pub struct HudInfo {
     pub warp_status: &'static str,
     pub notice: Option<String>,
     pub show_help: bool,
+    pub weapons: Vec<String>,
+    pub buffs: Vec<String>,
 }
 
 pub fn status_line(info: &HudInfo) -> String {
@@ -171,10 +174,28 @@ pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
             TextLabel::new(notice.clone(), WIDTH as f32 * 0.5, 22.0, TEXT_SIZE, NOTICE).centered(),
         );
     }
+    draw_loadout(&mut labels, info, bar_top);
     if info.show_help {
         draw_help(renderer, &mut labels);
     }
     labels
+}
+
+fn draw_loadout(labels: &mut Vec<TextLabel>, info: &HudInfo, bar_top: i32) {
+    let right = WIDTH as f32 - 5.0;
+    let mut y = bar_top as f32 - LOADOUT_LINE * (info.weapons.len() + info.buffs.len()) as f32 - 6.0;
+    for line in info.weapons.iter() {
+        let label = TextLabel::new(line.clone(), 0.0, y, TEXT_SIZE, SOFT_WHITE);
+        let x = right - label.width();
+        labels.push(TextLabel::new(line.clone(), x, y, TEXT_SIZE, SOFT_WHITE));
+        y += LOADOUT_LINE;
+    }
+    for line in info.buffs.iter() {
+        let label = TextLabel::new(line.clone(), 0.0, y, TEXT_SIZE, NOTICE);
+        let x = right - label.width();
+        labels.push(TextLabel::new(line.clone(), x, y, TEXT_SIZE, NOTICE));
+        y += LOADOUT_LINE;
+    }
 }
 
 fn draw_progress(
