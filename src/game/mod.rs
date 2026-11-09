@@ -1,3 +1,4 @@
+pub mod enemies;
 pub mod hud;
 pub mod player;
 pub mod progression;
@@ -22,6 +23,7 @@ use crate::world::generation::{asteroid_belt, scatter_surface, Asteroid, PropKin
 use crate::world::orbit::Orbit;
 use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
+use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use progression::PlayerProgression;
@@ -116,7 +118,7 @@ enum StartTransition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Enemy {
+pub struct PatrolEnemy {
     pub host: usize,
     pub orbit: Orbit,
     pub scale: f32,
@@ -161,7 +163,8 @@ pub struct Game {
     sun_base_radius: f32,
     asteroids: Vec<Asteroid>,
     surfaces: Vec<Surface>,
-    enemies: Vec<Enemy>,
+    menu_patrols: Vec<PatrolEnemy>,
+    run_enemies: EnemySwarm,
     models: Models,
     materials: Materials,
     colliders: Vec<Collider>,
@@ -213,7 +216,7 @@ fn load_models(assets: &mut AssetManager, system: &SolarSystem) -> Models {
     }
 }
 
-fn patrols(system: &SolarSystem) -> Vec<Enemy> {
+fn patrols(system: &SolarSystem) -> Vec<PatrolEnemy> {
     let plan: [(&str, f32, f32, f32, f32); 6] = [
         ("ROCOSO", 2.4, 0.42, 0.0, 0.5),
         ("ROCOSO", 3.1, -0.3, 2.5, -0.9),
@@ -226,7 +229,7 @@ fn patrols(system: &SolarSystem) -> Vec<Enemy> {
         .filter_map(|&(name, distance, speed, phase, tilt)| {
             let host = system.find(name)?;
             let radius = system.body(host).radius * distance;
-            Some(Enemy {
+            Some(PatrolEnemy {
                 host,
                 orbit: Orbit::circular(radius, speed, phase).with_tilt(tilt, phase),
                 scale: ENEMY_SCALE,
@@ -274,7 +277,7 @@ impl Game {
         let models = load_models(assets, &system);
         let asteroids = asteroid_belt(&system.config.belt);
         let surfaces = surfaces(&system);
-        let enemies = patrols(&system);
+        let menu_patrols = patrols(&system);
         let destination = START_DESTINATION.min(system.body_count() - 1);
         let sun_base_radius = system.body(0).radius;
         let ship = Ship::new(
@@ -301,7 +304,8 @@ impl Game {
             sun_base_radius,
             asteroids,
             surfaces,
-            enemies,
+            menu_patrols,
+            run_enemies: EnemySwarm::new(),
             models,
             materials: Materials {
                 ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
@@ -359,9 +363,13 @@ impl Game {
         self.program_mode = mode;
         self.progression.reset();
         match mode {
-            ProgramMode::Menu => self.session.reset(),
+            ProgramMode::Menu => {
+                self.session.reset();
+                self.run_enemies.clear();
+            }
             ProgramMode::Game => {
                 self.session.start(self.next_run_seed);
+                self.run_enemies.reset(self.next_run_seed);
                 apply_run_seed(&mut config, self.next_run_seed);
             }
         }
@@ -370,7 +378,7 @@ impl Game {
         self.system = SolarSystem::new(config);
         self.asteroids = asteroid_belt(&self.system.config.belt);
         self.surfaces = surfaces(&self.system);
-        self.enemies = patrols(&self.system);
+        self.menu_patrols = patrols(&self.system);
         self.ship = Ship::new(start, (self.system.sun_position() - start).normalize());
         self.warp = Warp::new();
         self.destination = START_DESTINATION.min(self.system.body_count() - 1);
@@ -457,6 +465,19 @@ impl Game {
             self.update_menu_orbit_lockout();
             self.try_enter_menu_orbit();
             self.try_start_game_transition();
+        }
+
+        if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
+            let enemy_update = self.run_enemies.update(
+                self.ship.position,
+                self.ship.forward(),
+                SHIP_RADIUS,
+                self.progression.level(),
+                delta_time,
+            );
+            if enemy_update.contact_damage > 0.0 {
+                self.damage_player(enemy_update.contact_damage);
+            }
         }
 
         match self.camera_mode {
@@ -888,7 +909,7 @@ impl Game {
             });
         }
 
-        for enemy in &self.enemies {
+        for enemy in &self.menu_patrols {
             let host = self.system.position(enemy.host);
             let forward = enemy.orbit.direction_of_travel(self.time);
             let up = enemy.orbit.offset(self.time).normalize();
@@ -901,6 +922,25 @@ impl Game {
                     )
                     .with_uniform_scale(enemy.scale),
                 radius: enemy.scale,
+            });
+        }
+
+        for enemy in self.run_enemies.enemies() {
+            let forward = if enemy.velocity.length() > f32::EPSILON {
+                enemy.velocity.normalize()
+            } else {
+                (self.ship.position - enemy.position).normalize()
+            };
+            scene.push(Entity {
+                model: Model::Mesh(self.models.enemy),
+                material: self.materials.enemy,
+                transform: Transform::new(enemy.position)
+                    .with_rotation(
+                        basis_rotation(forward, Vec3::new(0.0, 1.0, 0.0))
+                            * Mat4::rotation_y(MODEL_FORWARD_CORRECTION),
+                    )
+                    .with_uniform_scale(ENEMY_RENDER_SCALE),
+                radius: ENEMY_RENDER_SCALE,
             });
         }
 
@@ -1105,7 +1145,8 @@ mod tests {
         assert_eq!(first.session.seed(), second.session.seed());
         assert!(first.asteroids.is_empty());
         assert!(first.surfaces.is_empty());
-        assert!(first.enemies.is_empty());
+        assert!(first.menu_patrols.is_empty());
+        assert_eq!(first.run_enemies.active_count(), 0);
     }
 
     #[test]
@@ -1121,6 +1162,21 @@ mod tests {
 
         game.configure_mode(ProgramMode::Game, &mut camera);
         assert_eq!(game.progression, PlayerProgression::new());
+        assert_eq!(game.session.state(), RunState::Playing);
+    }
+
+    #[test]
+    fn run_enemy_contact_is_connected_to_player_health() {
+        let (mut game, mut camera) = test_game();
+        let input = InputState::new();
+        let mut effect = WarpEffect::new();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        game.run_enemies
+            .spawn_at(game.ship.position, game.progression.level());
+
+        game.update(&input, 1.0 / 60.0, &mut camera, &mut effect);
+
+        assert_eq!(game.progression.health(), 90.0);
         assert_eq!(game.session.state(), RunState::Playing);
     }
 }

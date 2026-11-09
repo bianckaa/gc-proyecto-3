@@ -51,6 +51,8 @@ La partida dura 15 minutos y el reloj permanece centrado en la parte superior. D
 
 Cada partida inicia con 100 puntos de vida, nivel 1 y una barra de experiencia vacía. Vida, nivel y progreso de XP permanecen visibles sobre la barra inferior. La experiencia requerida aumenta con cada nivel; estas estadísticas se reinician al comenzar una nueva partida.
 
+Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEMY1.obj`. Las naves se generan detrás del jugador, lo persiguen y causan daño por contacto; después de recibir un impacto, la nave tiene un breve periodo de invulnerabilidad. La salud máxima de todos los enemigos aumenta con el nivel del jugador y conserva proporcionalmente cualquier daño que ya hayan recibido.
+
 ## Modelos
 
 | Archivo | Uso |
