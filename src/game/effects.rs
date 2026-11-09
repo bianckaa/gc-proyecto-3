@@ -9,6 +9,10 @@ const SPARK_TRAIL: f32 = 0.06;
 const SPARK_DRAG: f32 = 1.6;
 const RING_SEGMENTS: usize = 32;
 const MAX_SPARKS: usize = 1500;
+const KNOCKBACK_STREAKS: usize = 6;
+const KNOCKBACK_SPEED: f32 = 22.0;
+const KNOCKBACK_REFERENCE: f32 = 12.0;
+const KNOCKBACK_COLOR: Color = Color::new(240, 240, 255);
 
 const IMPACT_COLOR: Color = Color::new(255, 220, 160);
 const ENEMY_COLORS: [Color; 2] = [Color::new(192, 80, 255), Color::new(255, 150, 60)];
@@ -119,6 +123,31 @@ impl Effects {
         self.burst(position, [IMPACT_COLOR, IMPACT_COLOR], 5, 9.0, 0.25);
     }
 
+    pub fn knockback(&mut self, position: Vec3, impulse: Vec3) {
+        let length = impulse.length();
+        if length <= f32::EPSILON {
+            return;
+        }
+        let direction = impulse * (1.0 / length);
+        let strength = (length / KNOCKBACK_REFERENCE).clamp(0.4, 2.0);
+        for _ in 0..KNOCKBACK_STREAKS {
+            if self.sparks.len() >= MAX_SPARKS {
+                break;
+            }
+            let jitter = self.random_direction() * 0.35;
+            let velocity = (direction + jitter).normalize() * (-KNOCKBACK_SPEED * strength);
+            let life = self.random.range(0.15, 0.3);
+            self.sparks.push(Spark {
+                position,
+                velocity,
+                life,
+                max_life: life,
+                color: KNOCKBACK_COLOR,
+            });
+        }
+        self.ring(position, 1.2 * strength, KNOCKBACK_COLOR, 0.2);
+    }
+
     pub fn enemy_explosion(&mut self, position: Vec3) {
         self.burst(position, ENEMY_COLORS, 26, 14.0, 0.7);
         self.ring(position, 3.5, ENEMY_COLORS[0], 0.45);
@@ -187,6 +216,15 @@ impl Default for Effects {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knockback_leaves_streaks_behind_the_target() {
+        let mut effects = Effects::new();
+        effects.knockback(Vec3::default(), Vec3::new(0.0, 0.0, -12.0));
+        assert!(effects.sparks.iter().all(|spark| spark.velocity.z > 0.0));
+        effects.knockback(Vec3::default(), Vec3::default());
+        assert_eq!(effects.rings.len(), 1);
+    }
 
     #[test]
     fn explosions_fade_out_over_time() {

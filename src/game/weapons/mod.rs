@@ -199,6 +199,8 @@ pub struct CombatEvents {
     pub enemies_destroyed: Vec<Vec3>,
     pub planets_destroyed: Vec<DestroyedPlanet>,
     pub explosions: Vec<(Vec3, f32)>,
+    pub knockbacks: Vec<(Vec3, Vec3)>,
+    pub damage: Vec<(Vec3, f32)>,
 }
 
 pub struct Targets<'a> {
@@ -293,6 +295,7 @@ impl Targets<'_> {
         events: &mut CombatEvents,
     ) {
         events.impacts.push(impact);
+        events.damage.push((impact, damage));
         match target {
             TargetId::Enemy(id) => {
                 let position = self
@@ -301,6 +304,9 @@ impl Targets<'_> {
                     .iter()
                     .find(|enemy| enemy.id == id)
                     .map(|enemy| enemy.position);
+                if impulse.length() > 0.01 {
+                    events.knockbacks.push((position.unwrap_or(impact), impulse));
+                }
                 if self
                     .enemies
                     .damage_with_knockback(id, damage, impulse)

@@ -135,6 +135,7 @@ impl App {
             Vec::new()
         } else {
             let mut labels = draw_hud(&mut self.renderer, &self.game.hud_info());
+            labels.extend(self.game.damage_labels(&self.camera));
             labels.extend(self.game.draw_overlays(&mut self.renderer));
             labels
         };

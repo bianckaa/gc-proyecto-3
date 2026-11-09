@@ -83,6 +83,13 @@ const ORBIT_SEGMENTS: usize = 128;
 const ENEMY_EXPERIENCE: u32 = 8;
 const MAX_IMPACT_EFFECTS: usize = 8;
 const DEATH_DELAY: f32 = 2.5;
+const SUMMARY_AUTO_RETURN: f32 = 20.0;
+const DAMAGE_NUMBER_LIFE: f32 = 0.8;
+const DAMAGE_NUMBER_RISE: f32 = 3.0;
+const DAMAGE_NUMBER_MERGE: f32 = 2.0;
+const MAX_DAMAGE_NUMBERS: usize = 40;
+const DAMAGE_NUMBER_COLOR: Color = Color::new(255, 230, 120);
+const DAMAGE_NUMBER_SIZE: f32 = 6.0;
 const COLLAPSE_DURATION: f32 = 8.0;
 const COLLAPSE_PULL: f32 = 40.0;
 const COLLAPSE_MIN_SUN: f32 = 0.08;
@@ -188,6 +195,13 @@ pub struct RunStats {
     pub planets_destroyed: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DamageNumber {
+    position: Vec3,
+    amount: f32,
+    life: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSummary {
     pub cause: &'static str,
@@ -235,6 +249,7 @@ pub struct Game {
     invulnerable_timer: f32,
     last_minute_warned: bool,
     sounds: Vec<SoundEffect>,
+    damage_numbers: Vec<DamageNumber>,
     planet_collider_start: usize,
     models: Models,
     materials: Materials,
@@ -408,6 +423,7 @@ impl Game {
             invulnerable_timer: 0.0,
             last_minute_warned: false,
             sounds: Vec::new(),
+            damage_numbers: Vec::new(),
             planet_collider_start: 0,
             models,
             materials: Materials {
@@ -478,6 +494,7 @@ impl Game {
         self.damage_flash = 0.0;
         self.invulnerable_timer = 0.0;
         self.last_minute_warned = false;
+        self.damage_numbers.clear();
         self.reward_random = SeededRandom::new(self.next_run_seed ^ 0x0BAD_5EED);
         match mode {
             ProgramMode::Menu => {
@@ -661,6 +678,7 @@ impl Game {
         camera.position = position;
 
         self.effects.update(delta_time);
+        self.update_damage_numbers(delta_time);
         effect.update(delta_time);
         if let Some((_, remaining)) = &mut self.notice {
             *remaining -= delta_time;
@@ -727,7 +745,8 @@ impl Game {
                 }
             }
             RunState::Summary => {
-                if input.was_pressed(Key::Enter) {
+                self.ending_timer += delta_time;
+                if input.was_pressed(Key::Enter) || self.ending_timer >= SUMMARY_AUTO_RETURN {
                     self.configure_mode(ProgramMode::Menu, camera);
                 } else if input.was_pressed(Key::R) {
                     self.next_run_seed = self.session.seed();
@@ -754,6 +773,7 @@ impl Game {
             seed: self.session.seed(),
         });
         self.roulette = None;
+        self.ending_timer = 0.0;
         self.session.show_summary();
     }
 
@@ -885,7 +905,7 @@ impl Game {
                 roulette.draw(renderer, &self.weapons.inventory)
             }
             (_, Some(summary)) if self.session.state() == RunState::Summary => {
-                draw_summary(renderer, summary)
+                draw_summary(renderer, summary, SUMMARY_AUTO_RETURN - self.ending_timer)
             }
             _ => Vec::new(),
         }
@@ -920,6 +940,59 @@ impl Game {
             .collect()
     }
 
+    fn push_damage_number(&mut self, position: Vec3, amount: f32) {
+        if let Some(existing) = self.damage_numbers.iter_mut().find(|number| {
+            (number.position - position).length() < DAMAGE_NUMBER_MERGE
+                && number.life > DAMAGE_NUMBER_LIFE * 0.5
+        }) {
+            existing.amount += amount;
+            existing.life = DAMAGE_NUMBER_LIFE;
+            return;
+        }
+        if self.damage_numbers.len() >= MAX_DAMAGE_NUMBERS {
+            self.damage_numbers.remove(0);
+        }
+        self.damage_numbers.push(DamageNumber {
+            position,
+            amount,
+            life: DAMAGE_NUMBER_LIFE,
+        });
+    }
+
+    fn update_damage_numbers(&mut self, delta_time: f32) {
+        let rise = self.ship.up() * (DAMAGE_NUMBER_RISE * delta_time);
+        self.damage_numbers.retain_mut(|number| {
+            number.life -= delta_time;
+            number.position = number.position + rise;
+            number.life > 0.0
+        });
+    }
+
+    pub fn damage_labels(&self, camera: &Camera) -> Vec<TextLabel> {
+        let view_projection = camera.view_projection_matrix();
+        self.damage_numbers
+            .iter()
+            .filter_map(|number| {
+                let clip = view_projection * number.position.extend(1.0);
+                if clip.w <= 0.0 {
+                    return None;
+                }
+                let x = (clip.x / clip.w + 1.0) * 0.5 * FRAMEBUFFER_WIDTH as f32;
+                let y = (1.0 - clip.y / clip.w) * 0.5 * FRAMEBUFFER_HEIGHT as f32;
+                Some(
+                    TextLabel::new(
+                        format!("{:.0}", number.amount),
+                        x,
+                        y,
+                        DAMAGE_NUMBER_SIZE,
+                        DAMAGE_NUMBER_COLOR,
+                    )
+                    .centered(),
+                )
+            })
+            .collect()
+    }
+
     fn handle_combat_events(&mut self, events: CombatEvents) {
         for kind in &events.shots {
             self.sounds.push(match kind {
@@ -943,6 +1016,12 @@ impl Game {
         }
         for impact in events.impacts.iter().take(MAX_IMPACT_EFFECTS) {
             self.effects.impact(*impact);
+        }
+        for (position, impulse) in events.knockbacks.iter().take(MAX_IMPACT_EFFECTS) {
+            self.effects.knockback(*position, *impulse);
+        }
+        for (position, amount) in &events.damage {
+            self.push_damage_number(*position, *amount);
         }
         for position in &events.enemies_destroyed {
             self.effects.enemy_explosion(*position);
@@ -1653,7 +1732,7 @@ impl Game {
     }
 }
 
-fn draw_summary(renderer: &mut Renderer, summary: &RunSummary) -> Vec<TextLabel> {
+fn draw_summary(renderer: &mut Renderer, summary: &RunSummary, remaining: f32) -> Vec<TextLabel> {
     const WIDTH: i32 = 260;
     const HEIGHT: i32 = 150;
     const TEXT: f32 = 6.0;
@@ -1708,7 +1787,10 @@ fn draw_summary(renderer: &mut Renderer, summary: &RunSummary) -> Vec<TextLabel>
     );
     labels.push(
         TextLabel::new(
-            "ENTER VOLVER AL MENU   R REINTENTAR CON LA MISMA SEMILLA",
+            format!(
+                "ENTER MENU ({:.0}S)   R REINTENTAR CON LA MISMA SEMILLA",
+                remaining.max(0.0).ceil()
+            ),
             center,
             (top + HEIGHT) as f32 - 12.0,
             TEXT,
@@ -1837,6 +1919,19 @@ mod tests {
     }
 
     #[test]
+    fn nearby_damage_numbers_merge_and_fade() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        game.push_damage_number(Vec3::new(0.0, 0.0, -10.0), 10.0);
+        game.push_damage_number(Vec3::new(0.5, 0.0, -10.0), 5.0);
+        game.push_damage_number(Vec3::new(30.0, 0.0, -10.0), 7.0);
+        assert_eq!(game.damage_numbers.len(), 2);
+        assert_eq!(game.damage_numbers[0].amount, 15.0);
+        game.update_damage_numbers(DAMAGE_NUMBER_LIFE + 0.1);
+        assert!(game.damage_numbers.is_empty());
+    }
+
+    #[test]
     fn death_shows_results_and_enter_returns_to_menu() {
         let (mut game, mut camera) = test_game();
         game.configure_mode(ProgramMode::Game, &mut camera);
@@ -1850,6 +1945,10 @@ mod tests {
         let summary = game.summary().unwrap();
         assert_eq!(summary.cause, "NAVE DESTRUIDA");
         assert_eq!(summary.weapons, vec!["RAYO NV1".to_owned()]);
+        for _ in 0..(60 * 21) {
+            game.update_ending(&input, 1.0 / 60.0, &mut camera);
+        }
+        assert_eq!(game.program_mode, ProgramMode::Menu);
     }
 
     #[test]
