@@ -90,6 +90,14 @@ const DAMAGE_NUMBER_MERGE: f32 = 2.0;
 const MAX_DAMAGE_NUMBERS: usize = 40;
 const DAMAGE_NUMBER_COLOR: Color = Color::new(255, 230, 120);
 const DAMAGE_NUMBER_SIZE: f32 = 6.0;
+const GAS_RING_COLOR: Color = Color::new(150, 205, 255);
+const GAS_RING_DIM: Color = Color::new(70, 110, 160);
+const DROID_COLOR: Color = Color::new(80, 230, 255);
+const DROID_SATELLITES: usize = 3;
+const CORE_HALO_COLOR: Color = Color::new(255, 130, 50);
+const CORE_GLOW: Vec3 = Vec3::new(0.25, 0.08, 0.0);
+const ROCKY_DEBRIS: usize = 7;
+const ROCKY_DEBRIS_COLOR: Color = Color::new(217, 194, 154);
 const COLLAPSE_DURATION: f32 = 8.0;
 const COLLAPSE_PULL: f32 = 40.0;
 const COLLAPSE_MIN_SUN: f32 = 0.08;
@@ -1528,6 +1536,10 @@ impl Game {
                 (material.base_color.y * planet.tint.y).clamp(0.0, 1.0),
                 (material.base_color.z * planet.tint.z).clamp(0.0, 1.0),
             );
+            if planet.kind == PlanetKind::Core {
+                let pulse = 0.6 + 0.4 * (self.time * 2.5 + planet.rotation_phase).sin();
+                material.emissive = material.emissive + CORE_GLOW * pulse;
+            }
             scene.push(Entity {
                 model: self.models.run_planets[planet.kind.index()],
                 material,
@@ -1608,6 +1620,9 @@ impl Game {
         }
         if self.program_mode == ProgramMode::Game {
             self.weapons.draw(renderer, self.aim(), self.time);
+        }
+        for planet in self.run_world.planets() {
+            draw_planet_signature(renderer, planet, self.time);
         }
         self.effects.draw(renderer);
         if self.program_mode == ProgramMode::Game && self.buffs.is_shielded() && self.ship_visible() {
@@ -1799,6 +1814,60 @@ fn draw_summary(renderer: &mut Renderer, summary: &RunSummary, remaining: f32) -
         .centered(),
     );
     labels
+}
+
+fn planet_ring(center: Vec3, u_axis: Vec3, v_axis: Vec3, radius: f32, segments: usize) -> Vec<Vec3> {
+    (0..=segments)
+        .map(|index| {
+            let angle = index as f32 / segments as f32 * std::f32::consts::TAU;
+            center + (u_axis * angle.cos() + v_axis * angle.sin()) * radius
+        })
+        .collect()
+}
+
+fn draw_planet_signature(renderer: &mut Renderer, planet: &run_world::RunPlanet, time: f32) {
+    let tilt = planet.rotation_phase;
+    let normal = Vec3::new(tilt.sin() * 0.35, 1.0, tilt.cos() * 0.35).normalize();
+    let u_axis = normal.cross(Vec3::new(1.0, 0.0, 0.0)).normalize();
+    let v_axis = normal.cross(u_axis);
+    let center = planet.position;
+    match planet.kind {
+        PlanetKind::Gas => {
+            for (scale, color) in [(1.7, GAS_RING_COLOR), (2.15, GAS_RING_DIM)] {
+                let points = planet_ring(center, u_axis, v_axis, planet.radius * scale, 64);
+                for segment in points.windows(2).step_by(2) {
+                    renderer.draw_line_3d(segment[0], segment[1], color, false);
+                }
+            }
+        }
+        PlanetKind::Droid => {
+            for index in 0..DROID_SATELLITES {
+                let angle = time * 0.8 + index as f32 * std::f32::consts::TAU / DROID_SATELLITES as f32;
+                let orbit = planet.radius * 1.6;
+                let position = center + (u_axis * angle.cos() + v_axis * angle.sin()) * orbit;
+                let arm = planet.radius * 0.18;
+                for axis in [u_axis, v_axis, normal] {
+                    renderer.draw_line_3d(position - axis * arm, position + axis * arm, DROID_COLOR, false);
+                }
+            }
+        }
+        PlanetKind::Core => {
+            let pulse = 1.25 + (time * 2.5 + tilt).sin() * 0.08;
+            let points = planet_ring(center, u_axis, v_axis, planet.radius * pulse, 48);
+            for segment in points.windows(2).skip(1).step_by(3) {
+                renderer.draw_line_3d(segment[0], segment[1], CORE_HALO_COLOR, false);
+            }
+        }
+        PlanetKind::Rocky => {
+            let orbit = planet.radius * 1.35;
+            for index in 0..ROCKY_DEBRIS {
+                let angle = time * 0.3 + index as f32 * 0.9;
+                let position = center + (u_axis * angle.cos() + v_axis * angle.sin()) * orbit;
+                let nudge = normal * (planet.radius * 0.05);
+                renderer.draw_line_3d(position - nudge, position + nudge, ROCKY_DEBRIS_COLOR, false);
+            }
+        }
+    }
 }
 
 fn scaled_controls(controls: ShipControls, factor: f32) -> ShipControls {
