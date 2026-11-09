@@ -1,4 +1,4 @@
-pub mod combat;
+pub mod effects;
 pub mod enemies;
 pub mod hud;
 pub mod player;
@@ -8,6 +8,7 @@ pub mod session;
 pub mod sun_lifecycle;
 pub mod warp;
 pub mod wave_director;
+pub mod weapons;
 
 use crate::assets::material::{glowing, solid};
 use crate::assets::mesh::{crystal, placeholder_ship, turned_around};
@@ -27,17 +28,18 @@ use crate::world::generation::{asteroid_belt, scatter_surface, Asteroid, PropKin
 use crate::world::orbit::Orbit;
 use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
-use combat::WeaponSystem;
+use effects::Effects;
 use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use progression::PlayerProgression;
-use run_world::{PlanetKind, RunWorld};
+use run_world::{DestroyedPlanet, PlanetKind, RunWorld};
 use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
 use sun_lifecycle::{follow_offset, radius_multiplier};
 use warp::{Destination, Warp, WarpEvent, WarpState};
 use wave_director::WaveDirector;
+use weapons::{Aim, CombatEvents, Modifiers, Targets, WeaponSystem};
 
 const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
 const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
@@ -69,6 +71,8 @@ const TIME_SCALE_STEP: f32 = 0.25;
 const NOTICE_DURATION: f32 = 3.5;
 const WELCOME_DURATION: f32 = 7.0;
 const ORBIT_SEGMENTS: usize = 128;
+const ENEMY_EXPERIENCE: u32 = 8;
+const MAX_IMPACT_EFFECTS: usize = 8;
 const ORBIT_COLOR: Color = Color::new(192, 80, 255);
 const DESTINATION_COLOR: Color = Color::new(92, 255, 92);
 const START_POSITION: Vec3 = Vec3::new(0.0, 10.0, 104.0);
@@ -87,7 +91,6 @@ const SAND_COLOR: Vec3 = Vec3::new(0.85, 0.76, 0.6);
 const CRYSTAL_COLOR: Vec3 = Vec3::new(0.75, 0.31, 1.0);
 const CRYSTAL_GLOW: Vec3 = Vec3::new(0.12, 0.03, 0.18);
 const BOULDER_COLOR: Vec3 = Vec3::new(0.62, 0.5, 0.38);
-const PROJECTILE_COLOR: Color = Color::new(255, 32, 32);
 
 const ASTEROID_DEFORMATION: Deformation = Deformation {
     seed: 11,
@@ -157,6 +160,12 @@ struct Surface {
     embed_depth: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunStats {
+    pub enemies_destroyed: u32,
+    pub planets_destroyed: u32,
+}
+
 pub struct Game {
     pub system: SolarSystem,
     pub ship: Ship,
@@ -179,6 +188,9 @@ pub struct Game {
     wave_director: WaveDirector,
     weapons: WeaponSystem,
     run_world: RunWorld,
+    effects: Effects,
+    run_stats: RunStats,
+    planet_collider_start: usize,
     models: Models,
     materials: Materials,
     colliders: Vec<Collider>,
@@ -337,6 +349,9 @@ impl Game {
             wave_director: WaveDirector::new(),
             weapons: WeaponSystem::new(),
             run_world: RunWorld::new(),
+            effects: Effects::new(),
+            run_stats: RunStats::default(),
+            planet_collider_start: 0,
             models,
             materials: Materials {
                 ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
@@ -394,6 +409,8 @@ impl Game {
         };
         self.program_mode = mode;
         self.progression.reset();
+        self.effects.clear();
+        self.run_stats = RunStats::default();
         match mode {
             ProgramMode::Menu => {
                 self.session.reset();
@@ -521,15 +538,17 @@ impl Game {
                     self.progression.level(),
                 );
             }
-            self.weapons.update(
-                self.ship.position,
-                self.ship.forward(),
-                self.ship.right(),
-                self.ship.up(),
-                &mut self.run_enemies,
-                &self.colliders,
-                delta_time,
-            );
+            let aim = self.aim();
+            let modifiers = self.weapon_modifiers();
+            let mut targets = Targets {
+                enemies: &mut self.run_enemies,
+                planets: &mut self.run_world,
+                obstacles: &self.colliders[..self.planet_collider_start],
+            };
+            let events = self
+                .weapons
+                .update(aim, &mut targets, modifiers, delta_time);
+            self.handle_combat_events(events);
             let enemy_update = self.run_enemies.update(
                 self.ship.position,
                 self.ship.forward(),
@@ -558,6 +577,7 @@ impl Game {
         );
         camera.position = position;
 
+        self.effects.update(delta_time);
         effect.update(delta_time);
         if let Some((_, remaining)) = &mut self.notice {
             *remaining -= delta_time;
@@ -565,6 +585,56 @@ impl Game {
                 self.notice = None;
             }
         }
+    }
+
+    fn aim(&self) -> Aim {
+        Aim {
+            origin: self.ship.position,
+            forward: self.ship.forward(),
+            right: self.ship.right(),
+            up: self.ship.up(),
+        }
+    }
+
+    fn weapon_modifiers(&self) -> Modifiers {
+        Modifiers::default()
+    }
+
+    pub fn run_stats(&self) -> RunStats {
+        self.run_stats
+    }
+
+    pub fn weapon_levels(&self) -> Vec<(&'static str, u8)> {
+        self.weapons
+            .inventory
+            .owned()
+            .map(|(kind, level)| (kind.name(), level))
+            .collect()
+    }
+
+    fn handle_combat_events(&mut self, events: CombatEvents) {
+        for impact in events.impacts.iter().take(MAX_IMPACT_EFFECTS) {
+            self.effects.impact(*impact);
+        }
+        for position in &events.enemies_destroyed {
+            self.effects.enemy_explosion(*position);
+            self.run_stats.enemies_destroyed += 1;
+            self.grant_player_experience(ENEMY_EXPERIENCE);
+        }
+        for (center, radius) in &events.explosions {
+            self.effects.bomb_explosion(*center, *radius);
+        }
+        for planet in &events.planets_destroyed {
+            self.effects
+                .planet_explosion(planet.position, planet.radius, planet.kind);
+            self.run_stats.planets_destroyed += 1;
+            self.reward_planet(*planet);
+        }
+    }
+
+    fn reward_planet(&mut self, planet: DestroyedPlanet) {
+        self.grant_player_experience(planet_experience(planet.kind));
+        self.notify(format!("PLANETA {} DESTRUIDO", planet_name(planet.kind)));
     }
 
     fn refresh_colliders(&mut self) {
@@ -576,6 +646,7 @@ impl Game {
                 Collider::sphere(origin + asteroid.position(time), asteroid.radius())
             }),
         );
+        self.planet_collider_start = self.colliders.len();
         self.colliders.extend(self.run_world.colliders());
     }
 
@@ -1078,14 +1149,10 @@ impl Game {
                 renderer.draw_line_3d(segment[0], segment[1], color, false);
             }
         }
-        for projectile in self.weapons.projectiles() {
-            renderer.draw_line_3d(
-                projectile.line_start(),
-                projectile.position,
-                PROJECTILE_COLOR,
-                false,
-            );
+        if self.program_mode == ProgramMode::Game {
+            self.weapons.draw(renderer, self.aim(), self.time);
         }
+        self.effects.draw(renderer);
     }
 
     pub fn hud_info(&self) -> HudInfo {
@@ -1168,6 +1235,24 @@ impl Game {
                 amount * amount * (3.0 - 2.0 * amount)
             }
         }
+    }
+}
+
+pub fn planet_name(kind: PlanetKind) -> &'static str {
+    match kind {
+        PlanetKind::Rocky => "ROCOSO",
+        PlanetKind::Gas => "GASEOSO",
+        PlanetKind::Core => "NUCLEO",
+        PlanetKind::Droid => "DROIDE",
+    }
+}
+
+fn planet_experience(kind: PlanetKind) -> u32 {
+    match kind {
+        PlanetKind::Rocky => 60,
+        PlanetKind::Gas => 30,
+        PlanetKind::Core => 30,
+        PlanetKind::Droid => 30,
     }
 }
 

@@ -68,6 +68,14 @@ impl RunPlanet {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DestroyedPlanet {
+    pub id: u64,
+    pub kind: PlanetKind,
+    pub position: Vec3,
+    pub radius: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct ActiveSector {
     coord: SectorCoord,
@@ -134,6 +142,33 @@ impl RunWorld {
 
     pub fn colliders(&self) -> impl Iterator<Item = Collider> + '_ {
         self.planets().map(|planet| planet.collider())
+    }
+
+    pub fn planet(&self, id: u64) -> Option<&RunPlanet> {
+        self.planets().find(|planet| planet.id == id)
+    }
+
+    pub fn damage_planet(&mut self, id: u64, amount: f32) -> Option<DestroyedPlanet> {
+        if !amount.is_finite() || amount <= 0.0 {
+            return None;
+        }
+        let planet = self
+            .sectors
+            .iter_mut()
+            .filter_map(|sector| sector.planet.as_mut())
+            .find(|planet| planet.id == id)?;
+        planet.health = (planet.health - amount).max(0.0);
+        if planet.health > 0.0 {
+            return None;
+        }
+        let destroyed = DestroyedPlanet {
+            id,
+            kind: planet.kind,
+            position: planet.position,
+            radius: planet.radius,
+        };
+        self.remove_planet(id);
+        Some(destroyed)
     }
 
     pub fn remove_planet(&mut self, id: u64) -> Option<RunPlanet> {
@@ -309,6 +344,22 @@ mod tests {
             .sectors
             .iter()
             .all(|sector| (sector.coord.x - 10).abs() <= ACTIVE_RADIUS));
+    }
+
+    #[test]
+    fn planets_lose_health_and_are_removed_when_destroyed() {
+        let mut world = RunWorld::new();
+        world.reset(7);
+        world.update(Vec3::default());
+        let planet = *world.planets().next().expect("hay al menos un planeta");
+        assert!(world.damage_planet(planet.id, planet.max_health * 0.5).is_none());
+        assert!(world.planet(planet.id).unwrap().health < planet.max_health);
+        let destroyed = world.damage_planet(planet.id, planet.max_health).unwrap();
+        assert_eq!(destroyed.kind, planet.kind);
+        assert!(world.planet(planet.id).is_none());
+        world.update(Vec3::new(5_000.0, 0.0, 0.0));
+        world.update(Vec3::default());
+        assert!(world.planet(planet.id).is_none());
     }
 
     #[test]
