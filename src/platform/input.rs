@@ -11,6 +11,7 @@ pub enum Key {
     E,
     C,
     F,
+    G,
     H,
     O,
     Tab,
@@ -30,10 +31,11 @@ pub enum Key {
     Minus,
     Equal,
     Escape,
+    Enter,
 }
 
 impl Key {
-    pub const ALL: [Key; 27] = [
+    pub const ALL: [Key; 29] = [
         Key::W,
         Key::A,
         Key::S,
@@ -42,6 +44,7 @@ impl Key {
         Key::E,
         Key::C,
         Key::F,
+        Key::G,
         Key::H,
         Key::O,
         Key::Tab,
@@ -61,6 +64,7 @@ impl Key {
         Key::Minus,
         Key::Equal,
         Key::Escape,
+        Key::Enter,
     ];
 
     pub const DIGITS: [Key; 5] = [
@@ -81,6 +85,7 @@ impl Key {
             Key::E => KeyboardKey::KEY_E,
             Key::C => KeyboardKey::KEY_C,
             Key::F => KeyboardKey::KEY_F,
+            Key::G => KeyboardKey::KEY_G,
             Key::H => KeyboardKey::KEY_H,
             Key::O => KeyboardKey::KEY_O,
             Key::Tab => KeyboardKey::KEY_TAB,
@@ -100,6 +105,7 @@ impl Key {
             Key::Minus => KeyboardKey::KEY_MINUS,
             Key::Equal => KeyboardKey::KEY_EQUAL,
             Key::Escape => KeyboardKey::KEY_ESCAPE,
+            Key::Enter => KeyboardKey::KEY_ENTER,
         }
     }
 }

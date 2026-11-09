@@ -37,6 +37,7 @@ cargo test
 | `F` | Warp al destino |
 | `-` / `=` | Velocidad de las órbitas en vivo |
 | `M` | Métricas de rendimiento |
+| `G` | Activar o desactivar la gravedad de los cuerpos |
 | `H` | Panel de controles |
 | `Esc` | Cerrar el panel o salir |
 
@@ -66,6 +67,8 @@ Los cristales de la superficie se generan por código. Si se agrega `assets/mode
 | Movimiento 3D con inercia | `W`, `S`, `A`, `D`, flechas, `Q`, `E`, `Espacio`, `Ctrl`, `Shift` | `src/game/player.rs` |
 | Modo órbita local | `O` cerca de un planeta | `src/game/player.rs` |
 | Colisiones de nave y cámara contra el Sol, planetas, luna y asteroides | Intentar atravesar un cuerpo | `src/engine/collision.rs` |
+| Gravedad de cada cuerpo que desvía la trayectoria de la nave | Pasar cerca de un planeta sin acelerar; `G` la apaga para comparar | `src/engine/gravity.rs`, `src/game/mod.rs` |
+| Mapeo de normales procedural con tangentes por triángulo | Relieve en asteroides y planeta rocoso | `src/renderer/normal_map.rs`, `src/renderer/pipeline.rs` |
 | Warp animado hacia un destino que se mueve | `1` a `5` o `Tab`, luego `F` | `src/game/warp.rs` |
 | Acercamiento y alejamiento sin pantallas de carga | Volar hacia cualquier planeta | Todo ocurre en la misma escena |
 | HUD, mira y panel de controles | Barra inferior, `+` al centro, `H` | `src/game/hud.rs` |
