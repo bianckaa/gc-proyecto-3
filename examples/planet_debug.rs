@@ -112,7 +112,11 @@ fn main() {
     let mut orbit_yaw = 0.0_f32;
     let mut orbit_pitch = 0.0_f32;
     let mut camera_distance = INITIAL_CAMERA_DISTANCE;
-    let mut selection = PlanetSelection::Droid;
+    let mut selection = if std::env::args().any(|argument| argument == "--rocky") {
+        PlanetSelection::Rocky
+    } else {
+        PlanetSelection::Droid
+    };
     let mut sun_heat_haze = true;
     let mut rendered_frames = 0_u32;
 

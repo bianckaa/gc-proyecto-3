@@ -27,7 +27,7 @@ use depth::DepthBuffer;
 use dithering::{dither, screen_door_visible};
 use framebuffer::{Color, Framebuffer};
 use heat_haze::HeatHaze;
-use lighting::PointLight;
+use lighting::{realistic_color, PointLight};
 use normal_map::NormalMap;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use rasterizer::FragmentOutput;
@@ -181,6 +181,7 @@ impl Renderer {
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
         let dithering_enabled = self.dithering_enabled;
+        let eye = camera.position;
         let normal_mapping_enabled = self.normal_mapping_enabled;
         let normal_map = Some(&self.normal_map);
 
@@ -228,6 +229,16 @@ impl Renderer {
                         time,
                         normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
+                    if material.shader == ShaderKind::RockyPlanet {
+                        return Some(FragmentOutput::opaque(Color::from_unit(realistic_color(
+                            surface.color,
+                            surface.intensity,
+                            (fragment.world_position - center).normalize(),
+                            fragment.world_position,
+                            &light,
+                            eye,
+                        ))));
+                    }
                     if material.shader == ShaderKind::GasPlanet {
                         let color = Color::from_unit(
                             surface.color * (0.72 + surface.intensity * 0.28),

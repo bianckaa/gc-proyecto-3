@@ -303,11 +303,7 @@ fn rocky_height(direction: Vec3) -> (f32, f32, f32) {
         .powi(3);
     let land = smoothstep(0.36, 0.68, continental);
     let mountains = ridge * land;
-    let grit = hash(
-        (direction.x * 48.0).floor() as i32 + 4,
-        (direction.y * 48.0).floor() as i32 + 7,
-        (direction.z * 48.0).floor() as i32 + 2,
-    );
+    let grit = value_noise(direction * 48.0 + Vec3::new(4.0, 7.0, 2.0));
     let height = (continental * 0.42 + mountains * 0.58 + (grit - 0.5) * 0.08).clamp(0.0, 1.0);
     (height, mountains, grit)
 }
@@ -701,7 +697,7 @@ pub enum ShaderKind {
 
 impl ShaderKind {
     pub fn uses_normal_map(self) -> bool {
-        matches!(self, ShaderKind::Rocky | ShaderKind::RockyPlanet)
+        matches!(self, ShaderKind::Rocky)
     }
 }
 
