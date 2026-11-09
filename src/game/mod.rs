@@ -3,6 +3,7 @@ pub mod enemies;
 pub mod hud;
 pub mod player;
 pub mod progression;
+pub mod run_world;
 pub mod session;
 pub mod sun_lifecycle;
 pub mod warp;
@@ -30,6 +31,7 @@ use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use progression::PlayerProgression;
+use run_world::{PlanetKind, RunWorld};
 use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
 use sun_lifecycle::{follow_offset, radius_multiplier};
@@ -136,6 +138,7 @@ struct Models {
     asteroid: Model,
     crystal: Model,
     boulder: Model,
+    run_planets: [Model; PlanetKind::COUNT],
 }
 
 struct Materials {
@@ -144,6 +147,7 @@ struct Materials {
     asteroid: Material,
     crystal: Material,
     boulder: Material,
+    run_planets: [Material; PlanetKind::COUNT],
 }
 
 struct Surface {
@@ -172,6 +176,7 @@ pub struct Game {
     run_enemies: EnemySwarm,
     wave_director: WaveDirector,
     weapons: WeaponSystem,
+    run_world: RunWorld,
     models: Models,
     materials: Materials,
     colliders: Vec<Collider>,
@@ -199,7 +204,7 @@ fn sphere_lod(
 fn load_models(assets: &mut AssetManager, system: &SolarSystem) -> Models {
     let sphere =
         Model::Lod(assets.lod_or_insert_with("esfera", sphere_lod(SPHERE_SUBDIVISIONS, None)));
-    let bodies = (0..system.body_count())
+    let bodies: Vec<Model> = (0..system.body_count())
         .map(|index| match system.body(index).model.file_name() {
             Some(file_name) => Model::Mesh(
                 assets.load_model_or_else(file_name, || Mesh::icosphere(SPHERE_SUBDIVISIONS[0])),
@@ -207,6 +212,12 @@ fn load_models(assets: &mut AssetManager, system: &SolarSystem) -> Models {
             None => sphere,
         })
         .collect();
+    let run_planets = [
+        bodies[system.find("ROCOSO").unwrap()],
+        bodies[system.find("GASEOSO").unwrap()],
+        bodies[system.find("NUCLEO").unwrap()],
+        bodies[system.find("DROIDE").unwrap()],
+    ];
     Models {
         bodies,
         ship: assets.load_ship(),
@@ -220,6 +231,7 @@ fn load_models(assets: &mut AssetManager, system: &SolarSystem) -> Models {
             "roca_superficie",
             sphere_lod(ASTEROID_SUBDIVISIONS, Some(BOULDER_DEFORMATION)),
         )),
+        run_planets,
     }
 }
 
@@ -285,6 +297,12 @@ impl Game {
         let asteroids = asteroid_belt(&system.config.belt);
         let surfaces = surfaces(&system);
         let menu_patrols = patrols(&system);
+        let run_planet_materials = [
+            system.body(system.find("ROCOSO").unwrap()).material,
+            system.body(system.find("GASEOSO").unwrap()).material,
+            system.body(system.find("NUCLEO").unwrap()).material,
+            system.body(system.find("DROIDE").unwrap()).material,
+        ];
         let destination = START_DESTINATION.min(system.body_count() - 1);
         let sun_base_radius = system.body(0).radius;
         let ship = Ship::new(
@@ -315,6 +333,7 @@ impl Game {
             run_enemies: EnemySwarm::new(),
             wave_director: WaveDirector::new(),
             weapons: WeaponSystem::new(),
+            run_world: RunWorld::new(),
             models,
             materials: Materials {
                 ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
@@ -322,6 +341,7 @@ impl Game {
                 asteroid: solid(SAND_COLOR, ShaderKind::Rocky),
                 crystal: glowing(CRYSTAL_COLOR, CRYSTAL_GLOW, ShaderKind::Lambert),
                 boulder: solid(BOULDER_COLOR, ShaderKind::Rocky),
+                run_planets: run_planet_materials,
             },
             colliders: Vec::new(),
             follow_distance: DEFAULT_FOLLOW_DISTANCE,
@@ -377,12 +397,14 @@ impl Game {
                 self.run_enemies.clear();
                 self.wave_director.reset();
                 self.weapons.reset();
+                self.run_world.clear();
             }
             ProgramMode::Game => {
                 self.session.start(self.next_run_seed);
                 self.run_enemies.reset(self.next_run_seed);
                 self.wave_director.reset();
                 self.weapons.reset();
+                self.run_world.reset(self.next_run_seed);
                 apply_run_seed(&mut config, self.next_run_seed);
             }
         }
@@ -428,6 +450,9 @@ impl Game {
         }
         self.update_sun_lifecycle(delta_time);
         self.system.update(delta_time);
+        if self.program_mode == ProgramMode::Game {
+            self.run_world.update(self.ship.position);
+        }
         self.refresh_colliders();
 
         let run_is_paused =
@@ -548,6 +573,7 @@ impl Game {
                 Collider::sphere(origin + asteroid.position(time), asteroid.radius())
             }),
         );
+        self.colliders.extend(self.run_world.colliders());
     }
 
     pub fn damage_player(&mut self, amount: f32) -> bool {
@@ -942,6 +968,29 @@ impl Game {
                     .with_rotation(asteroid.rotation(self.time))
                     .with_scale(asteroid.scale),
                 radius: asteroid.radius() * 1.4,
+            });
+        }
+
+        for planet in self.run_world.planets() {
+            let mut material = self.materials.run_planets[planet.kind.index()];
+            material.base_color = Vec3::new(
+                (material.base_color.x * planet.tint.x).clamp(0.0, 1.0),
+                (material.base_color.y * planet.tint.y).clamp(0.0, 1.0),
+                (material.base_color.z * planet.tint.z).clamp(0.0, 1.0),
+            );
+            scene.push(Entity {
+                model: self.models.run_planets[planet.kind.index()],
+                material,
+                transform: Transform::new(planet.position)
+                    .with_rotation(Mat4::rotation_y(
+                        planet.rotation_phase + self.time * planet.spin_speed,
+                    ))
+                    .with_scale(Vec3::new(
+                        planet.radius * planet.shape.x,
+                        planet.radius * planet.shape.y,
+                        planet.radius * planet.shape.z,
+                    )),
+                radius: planet.radius,
             });
         }
 

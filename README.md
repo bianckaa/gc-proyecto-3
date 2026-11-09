@@ -55,6 +55,8 @@ Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEM
 
 El director de hordas aumenta continuamente la presión durante los 15 minutos: reduce el intervalo entre apariciones y eleva el límite de enemigos activos desde 6 hasta un máximo de 48. Este escalado solo cambia la cantidad; la salud de cada enemigo continúa dependiendo exclusivamente del nivel del jugador.
 
+El escenario de la partida se construye en sectores procedurales tridimensionales de 300 unidades. La ventana activa se extiende más allá del plano visible de la cámara, por lo que los sectores solo se cargan o descargan fuera de pantalla. Cada sector tiene 30% de probabilidad de proponer un planeta, aunque los candidatos demasiado cercanos se descartan para conservar una separación mínima de 200 unidades. Cada cuerpo puede ser rocoso, gaseoso, núcleo o droide y recibe variaciones deterministas de tamaño, proporciones, color, rotación y resistencia según la semilla. Los planetas tienen colisión física y los eliminados no reaparecen al regresar.
+
 La nave comienza con un arma normal automática que dispara líneas rojas en la dirección del crosshair. Cada disparo alterna entre los cilindros de las alas, causa 10 puntos de daño, empuja al objetivo con knockback y los enemigos iniciales requieren dos impactos. Los rayos viajan más rápido que la velocidad turbo de la nave, usan colisión continua para no atravesar objetivos entre pasos de simulación y desaparecen al golpear un enemigo, el Sol u otro collider.
 
 ## Modelos
