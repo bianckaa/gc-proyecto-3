@@ -1,3 +1,4 @@
+use crate::engine::collision::{resolve_all, Collider};
 use crate::engine::math::Vec3;
 use crate::world::generation::SeededRandom;
 
@@ -15,6 +16,10 @@ const MIN_SPAWN_DISTANCE: f32 = 75.0;
 const MAX_SPAWN_DISTANCE: f32 = 90.0;
 const DESPAWN_DISTANCE: f32 = 700.0;
 const CONTACT_COOLDOWN: f32 = 0.75;
+const PLAYER_CONTACT_KNOCKBACK: f32 = 10.0;
+const ENEMY_CONTACT_KNOCKBACK: f32 = 8.0;
+const SEPARATION_PASSES: usize = 2;
+const KNOCKBACK_DAMPING: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunEnemy {
@@ -24,6 +29,7 @@ pub struct RunEnemy {
     pub health: f32,
     pub max_health: f32,
     level: u32,
+    knockback_velocity: Vec3,
 }
 
 impl RunEnemy {
@@ -36,6 +42,7 @@ impl RunEnemy {
             health: max_health,
             max_health,
             level,
+            knockback_velocity: Vec3::default(),
         }
     }
 
@@ -57,6 +64,7 @@ impl RunEnemy {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EnemyUpdate {
     pub contact_damage: f32,
+    pub player_knockback: Vec3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -112,6 +120,10 @@ impl EnemySwarm {
     }
 
     pub fn damage(&mut self, id: u64, amount: f32) -> EnemyDamage {
+        self.damage_with_knockback(id, amount, Vec3::default())
+    }
+
+    pub fn damage_with_knockback(&mut self, id: u64, amount: f32, impulse: Vec3) -> EnemyDamage {
         if !amount.is_finite() || amount <= 0.0 {
             return EnemyDamage::default();
         }
@@ -119,6 +131,10 @@ impl EnemySwarm {
             return EnemyDamage::default();
         };
         self.enemies[index].health = (self.enemies[index].health - amount).max(0.0);
+        if impulse.x.is_finite() && impulse.y.is_finite() && impulse.z.is_finite() {
+            self.enemies[index].knockback_velocity =
+                self.enemies[index].knockback_velocity + impulse;
+        }
         let destroyed = self.enemies[index].health <= 0.0;
         if destroyed {
             self.enemies.swap_remove(index);
@@ -132,6 +148,7 @@ impl EnemySwarm {
         player_forward: Vec3,
         player_radius: f32,
         player_level: u32,
+        obstacles: &[Collider],
         delta_time: f32,
     ) -> EnemyUpdate {
         if !delta_time.is_finite() || delta_time <= 0.0 {
@@ -148,19 +165,49 @@ impl EnemySwarm {
         for enemy in &mut self.enemies {
             enemy.sync_level(player_level);
             let to_player = player_position - enemy.position;
-            enemy.velocity = to_player.normalize() * MOVE_SPEED;
+            enemy.velocity = to_player.normalize() * MOVE_SPEED + enemy.knockback_velocity;
             enemy.position = enemy.position + enemy.velocity * delta_time;
+            enemy.knockback_velocity =
+                enemy.knockback_velocity * (-KNOCKBACK_DAMPING * delta_time).exp();
         }
         self.enemies
             .retain(|enemy| (enemy.position - player_position).length() <= DESPAWN_DISTANCE);
 
-        let touching = self.enemies.iter().any(|enemy| {
-            (enemy.position - player_position).length() <= ENEMY_RADIUS + player_radius
-        });
-        if touching && self.contact_timer <= 0.0 {
+        for _ in 0..SEPARATION_PASSES {
+            self.separate_enemies();
+            self.resolve_obstacles(obstacles);
+        }
+
+        let minimum_contact_distance = ENEMY_RADIUS + player_radius;
+        let can_hit = self.contact_timer <= 0.0;
+        let mut touching = false;
+        let mut player_knockback = Vec3::default();
+        if can_hit {
+            for enemy in &mut self.enemies {
+                let offset = player_position - enemy.position;
+                let distance = offset.length();
+                if distance > minimum_contact_distance {
+                    continue;
+                }
+                touching = true;
+                let away_from_enemy = if distance > f32::EPSILON {
+                    offset * (1.0 / distance)
+                } else {
+                    -fallback_direction(0, enemy.id)
+                };
+                player_knockback = player_knockback + away_from_enemy;
+                enemy.knockback_velocity =
+                    enemy.knockback_velocity - away_from_enemy * ENEMY_CONTACT_KNOCKBACK;
+            }
+        }
+        self.separate_from_player(player_position, player_radius);
+        self.resolve_obstacles(obstacles);
+        if touching {
             self.contact_timer = CONTACT_COOLDOWN;
+            let direction = player_knockback.normalize();
             EnemyUpdate {
                 contact_damage: CONTACT_DAMAGE,
+                player_knockback: direction * PLAYER_CONTACT_KNOCKBACK,
             }
         } else {
             EnemyUpdate::default()
@@ -178,6 +225,56 @@ impl EnemySwarm {
         let distance = self.random.range(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
         self.spawn_at(player_position + direction * distance, player_level);
     }
+
+    fn separate_enemies(&mut self) {
+        let minimum_distance = ENEMY_RADIUS * 2.0;
+        for first in 0..self.enemies.len() {
+            for second in (first + 1)..self.enemies.len() {
+                let (left, right) = self.enemies.split_at_mut(second);
+                let first_enemy = &mut left[first];
+                let second_enemy = &mut right[0];
+                let offset = second_enemy.position - first_enemy.position;
+                let distance = offset.length();
+                if distance >= minimum_distance {
+                    continue;
+                }
+                let direction = if distance > f32::EPSILON {
+                    offset * (1.0 / distance)
+                } else {
+                    fallback_direction(first_enemy.id, second_enemy.id)
+                };
+                let correction = direction * ((minimum_distance - distance) * 0.5);
+                first_enemy.position = first_enemy.position - correction;
+                second_enemy.position = second_enemy.position + correction;
+            }
+        }
+    }
+
+    fn separate_from_player(&mut self, player_position: Vec3, player_radius: f32) {
+        let minimum_distance = ENEMY_RADIUS + player_radius;
+        for enemy in &mut self.enemies {
+            let offset = enemy.position - player_position;
+            let distance = offset.length();
+            if distance >= minimum_distance {
+                continue;
+            }
+            let direction = if distance > f32::EPSILON {
+                offset * (1.0 / distance)
+            } else {
+                fallback_direction(0, enemy.id)
+            };
+            enemy.position = player_position + direction * minimum_distance;
+        }
+    }
+
+    fn resolve_obstacles(&mut self, obstacles: &[Collider]) {
+        for enemy in &mut self.enemies {
+            let (position, velocity, _) =
+                resolve_all(enemy.position, enemy.velocity, ENEMY_RADIUS, obstacles, 0.0);
+            enemy.position = position;
+            enemy.velocity = velocity;
+        }
+    }
 }
 
 impl Default for EnemySwarm {
@@ -190,6 +287,14 @@ pub fn health_for_level(level: u32) -> f32 {
     BASE_HEALTH * (1.0 + level.saturating_sub(1) as f32 * HEALTH_PER_LEVEL)
 }
 
+fn fallback_direction(first_id: u64, second_id: u64) -> Vec3 {
+    match first_id.wrapping_mul(31).wrapping_add(second_id) % 3 {
+        0 => Vec3::new(1.0, 0.0, 0.0),
+        1 => Vec3::new(0.0, 1.0, 0.0),
+        _ => Vec3::new(0.0, 0.0, 1.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,7 +304,7 @@ mod tests {
         let mut swarm = EnemySwarm::new();
         let id = swarm.spawn_at(Vec3::new(10.0, 0.0, 0.0), 1);
         swarm.damage(id, 5.0);
-        swarm.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 3, 0.1);
+        swarm.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 3, &[], 0.1);
 
         let enemy = swarm.enemies()[0];
         assert_eq!(enemy.max_health, health_for_level(3));
@@ -216,6 +321,7 @@ mod tests {
                 Vec3::new(0.0, 0.0, -1.0),
                 0.9,
                 1,
+                &[],
                 INITIAL_SPAWN_DELAY,
             );
             swarm.enemies()[0].position
@@ -235,11 +341,14 @@ mod tests {
                 Vec3::new(0.0, 0.0, -1.0),
                 0.9,
                 1,
+                &[],
                 delta_time,
             )
         };
 
-        assert_eq!(update(&mut swarm, 0.01).contact_damage, CONTACT_DAMAGE);
+        let first = update(&mut swarm, 0.01);
+        assert_eq!(first.contact_damage, CONTACT_DAMAGE);
+        assert!(first.player_knockback.length() > 0.0);
         assert_eq!(update(&mut swarm, 0.5).contact_damage, 0.0);
         assert_eq!(update(&mut swarm, 0.25).contact_damage, CONTACT_DAMAGE);
     }
@@ -252,5 +361,59 @@ mod tests {
         assert!(!swarm.damage(id, 5.0).destroyed);
         assert!(swarm.damage(id, 100.0).destroyed);
         assert_eq!(swarm.active_count(), 0);
+    }
+
+    #[test]
+    fn enemies_are_separated_from_each_other_and_the_player() {
+        let mut swarm = EnemySwarm::new();
+        swarm.spawn_at(Vec3::default(), 1);
+        swarm.spawn_at(Vec3::default(), 1);
+
+        swarm.update(
+            Vec3::default(),
+            Vec3::new(0.0, 0.0, -1.0),
+            0.9,
+            1,
+            &[],
+            1.0 / 60.0,
+        );
+
+        let first = swarm.enemies()[0].position;
+        let second = swarm.enemies()[1].position;
+        assert!((first - second).length() >= ENEMY_RADIUS * 2.0 - 1e-4);
+        for enemy in swarm.enemies() {
+            assert!(enemy.position.length() >= ENEMY_RADIUS + 0.9 - 1e-4);
+        }
+    }
+
+    #[test]
+    fn enemies_cannot_enter_world_colliders() {
+        let mut swarm = EnemySwarm::new();
+        swarm.spawn_at(Vec3::new(0.0, 0.0, 5.0), 1);
+        let obstacle = Collider::sphere(Vec3::default(), 10.0);
+
+        swarm.update(
+            Vec3::new(0.0, 0.0, 30.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            0.9,
+            1,
+            &[obstacle],
+            1.0 / 60.0,
+        );
+
+        assert!(swarm.enemies()[0].position.length() >= obstacle.radius + ENEMY_RADIUS - 1e-4);
+    }
+
+    #[test]
+    fn weapon_impulse_knocks_enemy_back_and_decays() {
+        let mut swarm = EnemySwarm::new();
+        let id = swarm.spawn_at(Vec3::new(0.0, 0.0, -10.0), 1);
+        swarm.damage_with_knockback(id, 1.0, Vec3::new(0.0, 0.0, -12.0));
+        let initial_knockback = swarm.enemies()[0].knockback_velocity.length();
+
+        swarm.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 1, &[], 0.1);
+
+        assert!(swarm.enemies()[0].position.z < -10.0);
+        assert!(swarm.enemies()[0].knockback_velocity.length() < initial_knockback);
     }
 }

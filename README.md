@@ -51,7 +51,9 @@ La partida dura 15 minutos y el reloj permanece centrado en la parte superior. D
 
 Cada partida inicia con 100 puntos de vida, nivel 1 y una barra de experiencia vacía. Vida, nivel y progreso de XP permanecen visibles sobre la barra inferior. La experiencia requerida aumenta con cada nivel; estas estadísticas se reinician al comenzar una nueva partida.
 
-Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEMY1.obj`. Las naves se generan detrás del jugador, lo persiguen y causan daño por contacto; después de recibir un impacto, la nave tiene un breve periodo de invulnerabilidad. La salud máxima de todos los enemigos aumenta con el nivel del jugador y conserva proporcionalmente cualquier daño que ya hayan recibido.
+Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEMY1.obj`. Las naves se generan detrás del jugador, lo persiguen y causan daño por contacto; el choque empuja en direcciones opuestas tanto a la nave como al enemigo y después concede un breve periodo de invulnerabilidad. La salud máxima de todos los enemigos aumenta con el nivel del jugador y conserva proporcionalmente cualquier daño que ya hayan recibido. Las naves se separan entre sí, no pueden ocupar el volumen del jugador y respetan los colliders del Sol y del escenario.
+
+La nave comienza con un arma normal automática que dispara líneas rojas en la dirección del crosshair. Cada disparo alterna entre los cilindros de las alas, causa 10 puntos de daño, empuja al objetivo con knockback y los enemigos iniciales requieren dos impactos. Los rayos viajan más rápido que la velocidad turbo de la nave, usan colisión continua para no atravesar objetivos entre pasos de simulación y desaparecen al golpear un enemigo, el Sol u otro collider.
 
 ## Modelos
 

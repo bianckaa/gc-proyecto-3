@@ -1,3 +1,4 @@
+pub mod combat;
 pub mod enemies;
 pub mod hud;
 pub mod player;
@@ -23,6 +24,7 @@ use crate::world::generation::{asteroid_belt, scatter_surface, Asteroid, PropKin
 use crate::world::orbit::Orbit;
 use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
+use combat::WeaponSystem;
 use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
@@ -80,6 +82,7 @@ const SAND_COLOR: Vec3 = Vec3::new(0.85, 0.76, 0.6);
 const CRYSTAL_COLOR: Vec3 = Vec3::new(0.75, 0.31, 1.0);
 const CRYSTAL_GLOW: Vec3 = Vec3::new(0.12, 0.03, 0.18);
 const BOULDER_COLOR: Vec3 = Vec3::new(0.62, 0.5, 0.38);
+const PROJECTILE_COLOR: Color = Color::new(255, 32, 32);
 
 const ASTEROID_DEFORMATION: Deformation = Deformation {
     seed: 11,
@@ -165,6 +168,7 @@ pub struct Game {
     surfaces: Vec<Surface>,
     menu_patrols: Vec<PatrolEnemy>,
     run_enemies: EnemySwarm,
+    weapons: WeaponSystem,
     models: Models,
     materials: Materials,
     colliders: Vec<Collider>,
@@ -306,6 +310,7 @@ impl Game {
             surfaces,
             menu_patrols,
             run_enemies: EnemySwarm::new(),
+            weapons: WeaponSystem::new(),
             models,
             materials: Materials {
                 ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
@@ -366,10 +371,12 @@ impl Game {
             ProgramMode::Menu => {
                 self.session.reset();
                 self.run_enemies.clear();
+                self.weapons.reset();
             }
             ProgramMode::Game => {
                 self.session.start(self.next_run_seed);
                 self.run_enemies.reset(self.next_run_seed);
+                self.weapons.reset();
                 apply_run_seed(&mut config, self.next_run_seed);
             }
         }
@@ -468,14 +475,25 @@ impl Game {
         }
 
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
+            self.weapons.update(
+                self.ship.position,
+                self.ship.forward(),
+                self.ship.right(),
+                self.ship.up(),
+                &mut self.run_enemies,
+                &self.colliders,
+                delta_time,
+            );
             let enemy_update = self.run_enemies.update(
                 self.ship.position,
                 self.ship.forward(),
                 SHIP_RADIUS,
                 self.progression.level(),
+                &self.colliders,
                 delta_time,
             );
             if enemy_update.contact_damage > 0.0 {
+                self.ship.velocity = self.ship.velocity + enemy_update.player_knockback;
                 self.damage_player(enemy_update.contact_damage);
             }
         }
@@ -967,6 +985,14 @@ impl Game {
             for segment in path.windows(2).step_by(2) {
                 renderer.draw_line_3d(segment[0], segment[1], color, false);
             }
+        }
+        for projectile in self.weapons.projectiles() {
+            renderer.draw_line_3d(
+                projectile.line_start(),
+                projectile.position,
+                PROJECTILE_COLOR,
+                false,
+            );
         }
     }
 
