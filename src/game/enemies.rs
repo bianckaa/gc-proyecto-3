@@ -9,9 +9,6 @@ pub const CONTACT_DAMAGE: f32 = 10.0;
 const BASE_HEALTH: f32 = 20.0;
 const HEALTH_PER_LEVEL: f32 = 0.35;
 const MOVE_SPEED: f32 = 7.0;
-const INITIAL_SPAWN_DELAY: f32 = 2.0;
-const SPAWN_INTERVAL: f32 = 4.0;
-const MAX_ACTIVE: usize = 8;
 const MIN_SPAWN_DISTANCE: f32 = 75.0;
 const MAX_SPAWN_DISTANCE: f32 = 90.0;
 const DESPAWN_DISTANCE: f32 = 700.0;
@@ -75,7 +72,6 @@ pub struct EnemyDamage {
 pub struct EnemySwarm {
     enemies: Vec<RunEnemy>,
     random: SeededRandom,
-    spawn_timer: f32,
     contact_timer: f32,
     next_id: u64,
 }
@@ -85,7 +81,6 @@ impl EnemySwarm {
         Self {
             enemies: Vec::new(),
             random: SeededRandom::new(1),
-            spawn_timer: INITIAL_SPAWN_DELAY,
             contact_timer: 0.0,
             next_id: 1,
         }
@@ -94,7 +89,6 @@ impl EnemySwarm {
     pub fn reset(&mut self, seed: u32) {
         self.enemies.clear();
         self.random = SeededRandom::new(seed ^ 0xA511_E9B3);
-        self.spawn_timer = INITIAL_SPAWN_DELAY;
         self.contact_timer = 0.0;
         self.next_id = 1;
     }
@@ -117,6 +111,18 @@ impl EnemySwarm {
         self.next_id = self.next_id.wrapping_add(1).max(1);
         self.enemies.push(RunEnemy::new(id, position, player_level));
         id
+    }
+
+    pub fn spawn_near_player(
+        &mut self,
+        player_position: Vec3,
+        player_forward: Vec3,
+        player_level: u32,
+    ) -> u64 {
+        let jitter = self.random.unit_direction() * 0.65;
+        let direction = (-player_forward.normalize() + jitter).normalize();
+        let distance = self.random.range(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
+        self.spawn_at(player_position + direction * distance, player_level)
     }
 
     pub fn damage(&mut self, id: u64, amount: f32) -> EnemyDamage {
@@ -145,7 +151,7 @@ impl EnemySwarm {
     pub fn update(
         &mut self,
         player_position: Vec3,
-        player_forward: Vec3,
+        _player_forward: Vec3,
         player_radius: f32,
         player_level: u32,
         obstacles: &[Collider],
@@ -155,12 +161,7 @@ impl EnemySwarm {
             return EnemyUpdate::default();
         }
 
-        self.spawn_timer -= delta_time;
         self.contact_timer = (self.contact_timer - delta_time).max(0.0);
-        if self.spawn_timer <= 0.0 && self.enemies.len() < MAX_ACTIVE {
-            self.spawn_near_player(player_position, player_forward, player_level);
-            self.spawn_timer += SPAWN_INTERVAL;
-        }
 
         for enemy in &mut self.enemies {
             enemy.sync_level(player_level);
@@ -212,18 +213,6 @@ impl EnemySwarm {
         } else {
             EnemyUpdate::default()
         }
-    }
-
-    fn spawn_near_player(
-        &mut self,
-        player_position: Vec3,
-        player_forward: Vec3,
-        player_level: u32,
-    ) {
-        let jitter = self.random.unit_direction() * 0.65;
-        let direction = (-player_forward.normalize() + jitter).normalize();
-        let distance = self.random.range(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
-        self.spawn_at(player_position + direction * distance, player_level);
     }
 
     fn separate_enemies(&mut self) {
@@ -316,14 +305,7 @@ mod tests {
         let simulate = |seed| {
             let mut swarm = EnemySwarm::new();
             swarm.reset(seed);
-            swarm.update(
-                Vec3::default(),
-                Vec3::new(0.0, 0.0, -1.0),
-                0.9,
-                1,
-                &[],
-                INITIAL_SPAWN_DELAY,
-            );
+            swarm.spawn_near_player(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 1);
             swarm.enemies()[0].position
         };
 

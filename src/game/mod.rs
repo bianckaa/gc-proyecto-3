@@ -6,6 +6,7 @@ pub mod progression;
 pub mod session;
 pub mod sun_lifecycle;
 pub mod warp;
+pub mod wave_director;
 
 use crate::assets::material::{glowing, solid};
 use crate::assets::mesh::{crystal, placeholder_ship, turned_around};
@@ -33,6 +34,7 @@ use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
 use sun_lifecycle::{follow_offset, radius_multiplier};
 use warp::{Destination, Warp, WarpEvent, WarpState};
+use wave_director::WaveDirector;
 
 const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
 const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
@@ -168,6 +170,7 @@ pub struct Game {
     surfaces: Vec<Surface>,
     menu_patrols: Vec<PatrolEnemy>,
     run_enemies: EnemySwarm,
+    wave_director: WaveDirector,
     weapons: WeaponSystem,
     models: Models,
     materials: Materials,
@@ -310,6 +313,7 @@ impl Game {
             surfaces,
             menu_patrols,
             run_enemies: EnemySwarm::new(),
+            wave_director: WaveDirector::new(),
             weapons: WeaponSystem::new(),
             models,
             materials: Materials {
@@ -371,11 +375,13 @@ impl Game {
             ProgramMode::Menu => {
                 self.session.reset();
                 self.run_enemies.clear();
+                self.wave_director.reset();
                 self.weapons.reset();
             }
             ProgramMode::Game => {
                 self.session.start(self.next_run_seed);
                 self.run_enemies.reset(self.next_run_seed);
+                self.wave_director.reset();
                 self.weapons.reset();
                 apply_run_seed(&mut config, self.next_run_seed);
             }
@@ -475,6 +481,18 @@ impl Game {
         }
 
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
+            let spawn_count = self.wave_director.update(
+                self.session.elapsed(),
+                self.run_enemies.active_count(),
+                delta_time,
+            );
+            for _ in 0..spawn_count {
+                self.run_enemies.spawn_near_player(
+                    self.ship.position,
+                    self.ship.forward(),
+                    self.progression.level(),
+                );
+            }
             self.weapons.update(
                 self.ship.position,
                 self.ship.forward(),

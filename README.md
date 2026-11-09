@@ -53,6 +53,8 @@ Cada partida inicia con 100 puntos de vida, nivel 1 y una barra de experiencia v
 
 Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEMY1.obj`. Las naves se generan detrás del jugador, lo persiguen y causan daño por contacto; el choque empuja en direcciones opuestas tanto a la nave como al enemigo y después concede un breve periodo de invulnerabilidad. La salud máxima de todos los enemigos aumenta con el nivel del jugador y conserva proporcionalmente cualquier daño que ya hayan recibido. Las naves se separan entre sí, no pueden ocupar el volumen del jugador y respetan los colliders del Sol y del escenario.
 
+El director de hordas aumenta continuamente la presión durante los 15 minutos: reduce el intervalo entre apariciones y eleva el límite de enemigos activos desde 6 hasta un máximo de 48. Este escalado solo cambia la cantidad; la salud de cada enemigo continúa dependiendo exclusivamente del nivel del jugador.
+
 La nave comienza con un arma normal automática que dispara líneas rojas en la dirección del crosshair. Cada disparo alterna entre los cilindros de las alas, causa 10 puntos de daño, empuja al objetivo con knockback y los enemigos iniciales requieren dos impactos. Los rayos viajan más rápido que la velocidad turbo de la nave, usan colisión continua para no atravesar objetivos entre pasos de simulación y desaparecen al golpear un enemigo, el Sol u otro collider.
 
 ## Modelos
