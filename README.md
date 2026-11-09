@@ -39,6 +39,7 @@ cargo test
 | `R` | Generar una semilla aleatoria desde el menú |
 | `M` | Métricas de rendimiento |
 | `G` | Activar o desactivar la gravedad de los cuerpos |
+| `Enter` | Confirmar en la ruleta; volver al menú desde los resultados |
 | `H` | Panel de controles |
 | `Esc` | Cerrar el panel; volver al menú desde el juego; salir desde el menú |
 
@@ -72,6 +73,63 @@ La nave comienza con un arma normal automática que dispara líneas rojas en la 
 
 Los cristales de la superficie se generan por código. Si se agrega `assets/models/crystal.obj`, el juego lo usa en su lugar sin cambiar código. Si falta cualquier modelo, el juego usa una malla temporal y avisa en la consola.
 
+## Intro
+
+Al abrir el programa se reproduce una intro al estilo de Star Wars antes del menú: texto de apertura azul, título que se aleja, texto amarillo inclinado en perspectiva y un paneo de cámara que termina con un salto warp. `Enter`, `Esc` o `Espacio` la saltan.
+
+## Armas
+
+Todas las armas que se obtienen disparan solas al mismo tiempo. Cada una tiene niveles del 1 al 5 que mejoran su daño, recarga, tamaño y alcance.
+
+| Arma | Comportamiento | Código |
+| --- | --- | --- |
+| Rayo | Arma inicial. Proyectiles rojos alternando entre las alas | `src/game/weapons/normal.rs` |
+| Gatling | Ráfagas rápidas de proyectiles amarillos con recarga interna | `src/game/weapons/gatling.rs` |
+| Láser | Haz rosa que atraviesa todos los objetivos en línea; recarga larga | `src/game/weapons/laser.rs` |
+| Aura | Anillo turquesa que daña y empuja periódicamente a todo lo cercano | `src/game/weapons/aura.rs` |
+| Bumerán | Sale hacia el frente, golpea al ir y al volver y regresa a la nave | `src/game/weapons/boomerang.rs` |
+| Bombas | Se lanzan periódicamente y explotan en área al chocar o al agotarse la mecha | `src/game/weapons/bombs.rs` |
+
+Las armas dañan enemigos y planetas. El Sol bloquea los disparos.
+
+## Planetas destructibles y recompensas
+
+Los planetas de la partida tienen vida. Al apuntarlos aparece su barra de vida en la parte superior. Al destruirlos explotan con colores de su tipo, no reaparecen y entregan una recompensa:
+
+| Planeta | Recompensa |
+| --- | --- |
+| Rocoso | Experiencia |
+| Gaseoso | Mejora temporal aleatoria |
+| Núcleo | Sube de nivel un arma que ya se tiene |
+| Droide | 70% de probabilidad de desbloquear un arma nueva; si no, mejora una existente |
+
+Nunca se entregan recompensas imposibles: si todas las armas están al máximo, se entrega experiencia.
+
+## Mejoras temporales
+
+Duran 20 segundos, se acumulan hasta 3 veces (+25% por nivel) y se muestran en el HUD con su tiempo restante: velocidad de la nave, daño, cadencia, velocidad de proyectiles y escudo de invulnerabilidad.
+
+## Subida de nivel y ruleta
+
+Destruir enemigos y planetas da experiencia. Al subir de nivel se pausa la partida y se abre una ruleta que revela tres opciones: desbloquear un arma, subirla de nivel, aumentar la vida máxima, reparar la nave o activar un escudo. Si se ganan varios niveles a la vez, las ruletas se encolan.
+
+| Tecla | Acción en la ruleta |
+| --- | --- |
+| `A` / `D` o flechas | Cambiar de opción |
+| `Enter` | Confirmar |
+| `1` a `3` | Elegir directamente |
+
+## Finales
+
+- **Nave destruida:** la nave explota y, tras una breve pausa, aparece la pantalla de resultados.
+- **Colapso solar (minuto 15):** el Sol se contrae, aparece un agujero negro que distorsiona y oscurece la imagen con un disco de acreción, los controles se bloquean poco a poco y la nave es absorbida.
+
+La pantalla de resultados muestra tiempo sobrevivido, nivel, enemigos y planetas destruidos, armas obtenidas y semilla. `Enter` vuelve al menú y `R` reintenta con la misma semilla.
+
+## Sonido
+
+Todos los efectos se generan por código como ondas (sin archivos de audio): disparos, láser, impactos, explosiones, destrucción de planetas, subida de nivel, ruleta, daño, alarma del último minuto y colapso. Código: `src/platform/audio.rs`.
+
 ## Características de la rúbrica y dónde se ven
 
 | Característica | Dónde se ve | Código |
@@ -89,6 +147,9 @@ Los cristales de la superficie se generan por código. Si se agrega `assets/mode
 | Warp animado hacia un destino que se mueve | `1` a `5` o `Tab`, luego `F` | `src/game/warp.rs` |
 | Acercamiento y alejamiento sin pantallas de carga | Volar hacia cualquier planeta | Todo ocurre en la misma escena |
 | HUD, mira y panel de controles | Barra inferior, `+` al centro, `H` | `src/game/hud.rs` |
+| Planetas destructibles con recompensas por tipo | Disparar a un planeta de la partida | `src/game/run_world.rs`, `src/game/upgrades.rs` |
+| Seis armas con niveles e inventario | HUD inferior derecho | `src/game/weapons/` |
+| Agujero negro con distorsión radial del framebuffer | Minuto 15 de la partida | `src/renderer/black_hole.rs` |
 | Paso fijo de simulación de 1/60 s | Todo el movimiento | `src/app.rs`, `src/platform/time.rs` |
 | Cargador OBJ propio y mallas compartidas | Todos los modelos | `src/assets/` |
 
