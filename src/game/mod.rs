@@ -4,6 +4,7 @@ pub mod enemies;
 pub mod hud;
 pub mod player;
 pub mod progression;
+pub mod roulette;
 pub mod run_world;
 pub mod session;
 pub mod sun_lifecycle;
@@ -32,7 +33,9 @@ use crate::world::solar_system::MAX_TIME_SCALE;
 use crate::world::{SolarSystem, SystemConfig};
 use buffs::{ActiveBuffs, BuffKind};
 use effects::Effects;
-use upgrades::{planet_reward, Reward};
+use roulette::Roulette;
+use upgrades::{apply_option, planet_reward, upgrade_options, Reward};
+use crate::platform::window::TextLabel;
 use crate::world::generation::SeededRandom;
 use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
@@ -197,6 +200,8 @@ pub struct Game {
     run_stats: RunStats,
     buffs: ActiveBuffs,
     reward_random: SeededRandom,
+    pending_upgrades: u32,
+    roulette: Option<Roulette>,
     planet_collider_start: usize,
     models: Models,
     materials: Materials,
@@ -360,6 +365,8 @@ impl Game {
             run_stats: RunStats::default(),
             buffs: ActiveBuffs::new(),
             reward_random: SeededRandom::new(1),
+            pending_upgrades: 0,
+            roulette: None,
             planet_collider_start: 0,
             models,
             materials: Materials {
@@ -421,6 +428,8 @@ impl Game {
         self.effects.clear();
         self.run_stats = RunStats::default();
         self.buffs.reset();
+        self.pending_upgrades = 0;
+        self.roulette = None;
         self.reward_random = SeededRandom::new(self.next_run_seed ^ 0x0BAD_5EED);
         match mode {
             ProgramMode::Menu => {
@@ -475,6 +484,7 @@ impl Game {
         }
 
         self.handle_commands(input, camera, effect);
+        self.update_upgrades(input, delta_time);
         if self.program_mode == ProgramMode::Game && self.session.update(delta_time) {
             self.ship.stop();
             self.notify("EL SOL HA COMENZADO A COLAPSAR");
@@ -499,7 +509,8 @@ impl Game {
             controls
         };
 
-        if self.warp.is_traveling() {
+        if self.simulation_frozen() {
+        } else if self.warp.is_traveling() {
             let target = self.warp.target().unwrap_or(self.destination);
             let destination = self.destination_of(target);
             if let WarpEvent::Arrived(body) =
@@ -599,6 +610,80 @@ impl Game {
             if *remaining <= 0.0 {
                 self.notice = None;
             }
+        }
+    }
+
+    fn simulation_frozen(&self) -> bool {
+        self.program_mode == ProgramMode::Game
+            && self.session.state() == RunState::UpgradeRoulette
+    }
+
+    fn open_roulette(&mut self) {
+        let options = upgrade_options(&self.weapons.inventory, &mut self.reward_random, 3);
+        let level = self.progression.level() + 1 - self.pending_upgrades.max(1);
+        self.roulette = Some(Roulette::new(options, level));
+        self.session.begin_upgrade_roulette();
+    }
+
+    fn update_upgrades(&mut self, input: &InputState, delta_time: f32) {
+        if self.program_mode != ProgramMode::Game {
+            return;
+        }
+        if self.roulette.is_none()
+            && self.pending_upgrades > 0
+            && self.session.state() == RunState::Playing
+        {
+            self.open_roulette();
+        }
+        if self.session.state() != RunState::UpgradeRoulette {
+            return;
+        }
+        let Some(roulette) = &mut self.roulette else {
+            self.session.resume_playing();
+            return;
+        };
+        roulette.update(delta_time);
+        if input.was_pressed(Key::A) || input.was_pressed(Key::Left) {
+            roulette.move_selection(-1);
+        }
+        if input.was_pressed(Key::D) || input.was_pressed(Key::Right) {
+            roulette.move_selection(1);
+        }
+        let mut choice = input
+            .pressed_digit()
+            .and_then(|index| roulette.choose(index));
+        if choice.is_none() && input.was_pressed(Key::Enter) {
+            choice = roulette.confirm();
+        }
+        if let Some(option) = choice {
+            self.confirm_upgrade(option);
+        }
+    }
+
+    fn confirm_upgrade(&mut self, option: upgrades::UpgradeOption) {
+        apply_option(
+            option,
+            &mut self.weapons.inventory,
+            &mut self.progression,
+            &mut self.buffs,
+        );
+        self.pending_upgrades = self.pending_upgrades.saturating_sub(1);
+        self.roulette = None;
+        if self.pending_upgrades > 0 {
+            self.session.resume_playing();
+            self.open_roulette();
+        } else {
+            self.session.resume_playing();
+            self.notify("MEJORA APLICADA");
+        }
+    }
+
+    pub fn draw_overlays(&self, renderer: &mut Renderer) -> Vec<TextLabel> {
+        match &self.roulette {
+            Some(roulette) if self.session.state() == RunState::UpgradeRoulette => {
+                roulette.draw(renderer, &self.weapons.inventory)
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -717,6 +802,7 @@ impl Game {
         }
         let gain = self.progression.grant_experience(amount);
         if gain.levels_gained > 0 {
+            self.pending_upgrades += gain.levels_gained;
             self.notify(format!("NIVEL {}", self.progression.level()));
         }
         gain.levels_gained
@@ -1405,6 +1491,28 @@ mod tests {
         assert!(first.surfaces.is_empty());
         assert!(first.menu_patrols.is_empty());
         assert_eq!(first.run_enemies.active_count(), 0);
+    }
+
+    #[test]
+    fn level_ups_queue_roulettes_that_pause_the_run() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        let levels = game.grant_player_experience(500);
+        assert!(levels >= 2);
+        let input = InputState::new();
+        game.update_upgrades(&input, 1.0 / 60.0);
+        assert_eq!(game.session.state(), RunState::UpgradeRoulette);
+        assert!(!game.session.update(1.0));
+        for _ in 0..levels {
+            assert_eq!(game.session.state(), RunState::UpgradeRoulette);
+            let roulette = game.roulette.as_mut().unwrap();
+            roulette.update(5.0);
+            let option = roulette.confirm().unwrap();
+            game.confirm_upgrade(option);
+        }
+        assert_eq!(game.session.state(), RunState::Playing);
+        assert_eq!(game.pending_upgrades, 0);
+        assert!(game.roulette.is_none());
     }
 
     #[test]

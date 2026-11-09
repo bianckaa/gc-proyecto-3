@@ -82,35 +82,43 @@ pub fn upgrade_options(
     options
 }
 
-pub fn describe(option: UpgradeOption, inventory: &Inventory) -> (String, String) {
+pub fn describe(option: UpgradeOption, inventory: &Inventory) -> (String, Vec<String>) {
     match option {
-        UpgradeOption::Unlock(kind) => (
-            format!("{} NUEVA", kind.name()),
-            kind.stats(1).summary(),
-        ),
+        UpgradeOption::Unlock(kind) => {
+            let stats = kind.stats(1);
+            (
+                format!("{} NUEVA", kind.name()),
+                vec![
+                    "NIVEL 1".to_owned(),
+                    format!("DANO {:.0}", stats.damage),
+                    format!("RECARGA {:.2}S", stats.cooldown),
+                ],
+            )
+        }
         UpgradeOption::Improve(kind) => {
             let level = inventory.level(kind);
             let now = kind.stats(level);
             let next = kind.stats(level + 1);
             (
-                format!("{} NV {} > {}", kind.name(), level, level + 1),
-                format!(
-                    "DANO {:.0} > {:.0}  RECARGA {:.2} > {:.2}",
-                    now.damage, next.damage, now.cooldown, next.cooldown
-                ),
+                kind.name().to_owned(),
+                vec![
+                    format!("NIVEL {} > {}", level, level + 1),
+                    format!("DANO {:.0} > {:.0}", now.damage, next.damage),
+                    format!("RECARGA {:.2} > {:.2}", now.cooldown, next.cooldown),
+                ],
             )
         }
         UpgradeOption::MaxHealth => (
             "BLINDAJE".to_owned(),
-            format!("VIDA MAXIMA +{:.0}", MAX_HEALTH_BONUS),
+            vec![format!("VIDA MAXIMA +{:.0}", MAX_HEALTH_BONUS)],
         ),
         UpgradeOption::Repair => (
             "REPARACION".to_owned(),
-            format!("RECUPERA {:.0} DE VIDA", REPAIR_AMOUNT),
+            vec![format!("RECUPERA {:.0} VIDA", REPAIR_AMOUNT)],
         ),
         UpgradeOption::Shield => (
             "ESCUDO".to_owned(),
-            format!("INVULNERABLE {:.0}S", BUFF_DURATION),
+            vec![format!("INVULNERABLE {:.0}S", BUFF_DURATION)],
         ),
     }
 }

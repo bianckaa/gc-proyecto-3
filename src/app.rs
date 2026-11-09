@@ -116,7 +116,9 @@ impl App {
         let labels = if flash > 0.0 {
             Vec::new()
         } else {
-            draw_hud(&mut self.renderer, &self.game.hud_info())
+            let mut labels = draw_hud(&mut self.renderer, &self.game.hud_info());
+            labels.extend(self.game.draw_overlays(&mut self.renderer));
+            labels
         };
         self.renderer.fade_to_white(flash);
         self.window.present(self.renderer.pixels(), &labels);
