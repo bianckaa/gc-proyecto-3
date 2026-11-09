@@ -14,6 +14,7 @@ use crate::assets::mesh::{crystal, placeholder_ship, turned_around};
 use crate::assets::{AssetManager, MeshHandle};
 use crate::engine::camera::Camera;
 use crate::engine::collision::{resolve_all, Collider};
+use crate::engine::gravity::{total_acceleration, GravityWell};
 use crate::engine::math::{Mat4, Vec3};
 use crate::engine::scene::{Entity, Model, Scene};
 use crate::engine::transform::{basis_rotation, rotate_vector, Transform};
@@ -170,6 +171,7 @@ pub struct Game {
     next_run_seed: u32,
     seed_input: Option<String>,
     sun_base_radius: f32,
+    pub gravity_enabled: bool,
     asteroids: Vec<Asteroid>,
     surfaces: Vec<Surface>,
     menu_patrols: Vec<PatrolEnemy>,
@@ -327,6 +329,7 @@ impl Game {
             next_run_seed: generate_seed(),
             seed_input: None,
             sun_base_radius,
+            gravity_enabled: true,
             asteroids,
             surfaces,
             menu_patrols,
@@ -641,6 +644,14 @@ impl Game {
         if input.was_pressed(Key::M) {
             self.show_metrics = !self.show_metrics;
         }
+        if input.was_pressed(Key::G) {
+            self.gravity_enabled = !self.gravity_enabled;
+            self.notify(if self.gravity_enabled {
+                "GRAVEDAD ACTIVADA"
+            } else {
+                "GRAVEDAD DESACTIVADA"
+            });
+        }
         if input.was_pressed(Key::C) {
             self.camera_mode = match self.camera_mode {
                 CameraMode::Follow => CameraMode::Free,
@@ -830,9 +841,23 @@ impl Game {
         }
     }
 
+    fn gravity_wells(&self) -> Vec<GravityWell> {
+        (0..self.system.body_count())
+            .map(|index| {
+                GravityWell::new(self.system.position(index), self.system.body(index).radius)
+            })
+            .collect()
+    }
+
     fn fly(&mut self, controls: &ShipControls, delta_time: f32) {
         match self.ship.mode {
-            FlightMode::Free => self.ship.update_free(controls, delta_time),
+            FlightMode::Free => {
+                if self.gravity_enabled {
+                    let pull = total_acceleration(self.ship.position, &self.gravity_wells());
+                    self.ship.apply_acceleration(pull, delta_time);
+                }
+                self.ship.update_free(controls, delta_time);
+            }
             FlightMode::Orbit { body, .. } => {
                 let center = self.system.position(body);
                 let displacement = self.system.displacement(body);

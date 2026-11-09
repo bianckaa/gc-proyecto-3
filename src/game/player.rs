@@ -155,6 +155,10 @@ impl Ship {
         self.bank += (target_bank - self.bank) * exponential_blend(BANK_RESPONSE, delta_time);
     }
 
+    pub fn apply_acceleration(&mut self, acceleration: Vec3, delta_time: f32) {
+        self.velocity = self.velocity + acceleration * delta_time;
+    }
+
     pub fn update_free(&mut self, controls: &ShipControls, delta_time: f32) {
         self.steer(controls, delta_time);
         let thrust = if controls.boost { BOOST_THRUST } else { THRUST };

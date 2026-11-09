@@ -22,6 +22,7 @@ pub struct ShadedVertex {
     pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
+    pub tangent: Vec3,
     pub uv: Vec2,
 }
 
@@ -32,6 +33,7 @@ pub struct Fragment {
     pub local_position: Vec3,
     pub world_position: Vec3,
     pub normal: Vec3,
+    pub tangent: Vec3,
     pub uv: Vec2,
 }
 
@@ -66,7 +68,7 @@ fn edge(a: ScreenVertex, b: ScreenVertex, px: f32, py: f32) -> f32 {
     (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)
 }
 
-fn for_each_covered_pixel(
+pub(crate) fn for_each_covered_pixel(
     width: usize,
     height: usize,
     a: ScreenVertex,
@@ -141,6 +143,7 @@ pub fn fill_shaded_triangle(
             local_position: a.local_position * pa + b.local_position * pb + c.local_position * pc,
             world_position: a.world_position * pa + b.world_position * pb + c.world_position * pc,
             normal: (a.normal * pa + b.normal * pb + c.normal * pc).normalize(),
+            tangent: a.tangent * pa + b.tangent * pb + c.tangent * pc,
             uv: a.uv * pa + b.uv * pb + c.uv * pc,
         };
         if let Some(output) = shade(&fragment) {
@@ -180,6 +183,7 @@ mod tests {
             local_position: Vec3::default(),
             world_position: Vec3::default(),
             normal: Vec3::new(0.0, 1.0, 0.0),
+            tangent: Vec3::default(),
             uv: Vec2::new(u, 0.0),
         };
         let vertices = [
@@ -232,6 +236,7 @@ mod tests {
             local_position: Vec3::default(),
             world_position: Vec3::default(),
             normal: Vec3::new(0.0, 1.0, 0.0),
+            tangent: Vec3::default(),
             uv: Vec2::default(),
         });
         let mut framebuffer = Framebuffer::new();

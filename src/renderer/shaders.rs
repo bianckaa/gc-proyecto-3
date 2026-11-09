@@ -1,4 +1,5 @@
 use super::lighting::PointLight;
+use super::normal_map::NormalMap;
 use super::rasterizer::Fragment;
 use super::Material;
 use crate::engine::math::{Vec2, Vec3};
@@ -21,6 +22,7 @@ pub struct ShadeInput<'a> {
     pub material: &'a Material,
     pub light: &'a PointLight,
     pub time: f32,
+    pub normal_map: Option<&'a NormalMap>,
 }
 
 fn hash(x: i32, y: i32, z: i32) -> f32 {
@@ -697,7 +699,32 @@ pub enum ShaderKind {
     Sun,
 }
 
+impl ShaderKind {
+    pub fn uses_normal_map(self) -> bool {
+        matches!(self, ShaderKind::Rocky | ShaderKind::RockyPlanet)
+    }
+}
+
 pub fn shade(input: &ShadeInput) -> Surface {
+    let mapped_fragment;
+    let mapped_input;
+    let input = match input.normal_map {
+        Some(map) if input.material.shader.uses_normal_map() => {
+            mapped_fragment = Fragment {
+                normal: map.perturb(input.fragment),
+                ..*input.fragment
+            };
+            mapped_input = ShadeInput {
+                fragment: &mapped_fragment,
+                material: input.material,
+                light: input.light,
+                time: input.time,
+                normal_map: None,
+            };
+            &mapped_input
+        }
+        _ => input,
+    };
     let surface = match input.material.shader {
         ShaderKind::CorePlanet => shade_core_planet(input),
         ShaderKind::DroidPlanet => shade_droid_planet(input),

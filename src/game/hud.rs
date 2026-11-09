@@ -24,7 +24,7 @@ pub const BLACK: Color = Color::BLACK;
 const PROGRESS_BAR_WIDTH: i32 = 108;
 const PROGRESS_BAR_HEIGHT: i32 = 4;
 
-pub const CONTROLS: [(&str, &str); 18] = [
+pub const CONTROLS: [(&str, &str); 19] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
     ("A / D", "GIRAR; ORBITA: RODEAR"),
     ("FLECHAS", "PITCH Y GIRO"),
@@ -41,6 +41,7 @@ pub const CONTROLS: [(&str, &str); 18] = [
     ("I", "EDITAR SEMILLA (MENU)"),
     ("R", "SEMILLA ALEATORIA (MENU)"),
     ("M", "METRICAS"),
+    ("G", "GRAVEDAD"),
     ("H", "MOSTRAR AYUDA"),
     ("ESC", "VOLVER AL MENU / SALIR"),
 ];
