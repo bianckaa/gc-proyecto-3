@@ -22,6 +22,7 @@ use crate::engine::gravity::{total_acceleration, GravityWell};
 use crate::engine::math::{Mat4, Vec3};
 use crate::engine::scene::{Entity, Model, Scene};
 use crate::engine::transform::{basis_rotation, rotate_vector, Transform};
+use crate::platform::audio::SoundEffect;
 use crate::platform::input::{InputState, Key, MouseButton};
 use crate::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use crate::renderer::shaders::ShaderKind;
@@ -233,6 +234,7 @@ pub struct Game {
     damage_flash: f32,
     invulnerable_timer: f32,
     last_minute_warned: bool,
+    sounds: Vec<SoundEffect>,
     planet_collider_start: usize,
     models: Models,
     materials: Materials,
@@ -405,6 +407,7 @@ impl Game {
             damage_flash: 0.0,
             invulnerable_timer: 0.0,
             last_minute_warned: false,
+            sounds: Vec::new(),
             planet_collider_start: 0,
             models,
             materials: Materials {
@@ -535,6 +538,7 @@ impl Game {
             self.ship.stop();
             self.ending_timer = 0.0;
             self.ending_cause = Some("EL SOL COLAPSO");
+            self.sounds.push(SoundEffect::Collapse);
             self.notify("EL SOL HA COMENZADO A COLAPSAR");
         }
         self.update_sun_lifecycle(delta_time);
@@ -694,6 +698,7 @@ impl Game {
         {
             self.last_minute_warned = true;
             self.notify("ULTIMO MINUTO - EL SOL ESTA POR COLAPSAR");
+            self.sounds.push(SoundEffect::Alarm);
         }
         match self.session.state() {
             RunState::PlayerDestroyed => {
@@ -836,7 +841,9 @@ impl Game {
             self.session.resume_playing();
             return;
         };
-        roulette.update(delta_time);
+        if roulette.update(delta_time) {
+            self.sounds.push(SoundEffect::RouletteTick);
+        }
         if input.was_pressed(Key::A) || input.was_pressed(Key::Left) {
             roulette.move_selection(-1);
         }
@@ -897,6 +904,10 @@ impl Game {
         self.buffs.modifiers()
     }
 
+    pub fn take_sounds(&mut self) -> Vec<SoundEffect> {
+        std::mem::take(&mut self.sounds)
+    }
+
     pub fn run_stats(&self) -> RunStats {
         self.run_stats
     }
@@ -910,6 +921,26 @@ impl Game {
     }
 
     fn handle_combat_events(&mut self, events: CombatEvents) {
+        for kind in &events.shots {
+            self.sounds.push(match kind {
+                weapons::WeaponKind::Laser => SoundEffect::Laser,
+                weapons::WeaponKind::Bombs | weapons::WeaponKind::Boomerang => SoundEffect::Launch,
+                weapons::WeaponKind::Aura => SoundEffect::Impact,
+                _ => SoundEffect::Shot,
+            });
+        }
+        if !events.impacts.is_empty() {
+            self.sounds.push(SoundEffect::Impact);
+        }
+        if !events.enemies_destroyed.is_empty() {
+            self.sounds.push(SoundEffect::EnemyDestroyed);
+        }
+        if !events.explosions.is_empty() {
+            self.sounds.push(SoundEffect::BombExplosion);
+        }
+        if !events.planets_destroyed.is_empty() {
+            self.sounds.push(SoundEffect::PlanetDestroyed);
+        }
         for impact in events.impacts.iter().take(MAX_IMPACT_EFFECTS) {
             self.effects.impact(*impact);
         }
@@ -987,10 +1018,12 @@ impl Game {
         let destroyed = self.progression.take_damage(amount);
         self.damage_flash = DAMAGE_FLASH_DURATION;
         self.invulnerable_timer = INVULNERABILITY_DURATION;
+        self.sounds.push(SoundEffect::Damage);
         if destroyed {
             self.session.destroy_player();
             self.effects.player_explosion(self.ship.position);
             self.ending_timer = 0.0;
+            self.sounds.push(SoundEffect::PlanetDestroyed);
             self.ending_cause = Some("NAVE DESTRUIDA");
             self.ship.stop();
             self.notify("NAVE DESTRUIDA");
@@ -1005,6 +1038,7 @@ impl Game {
         let gain = self.progression.grant_experience(amount);
         if gain.levels_gained > 0 {
             self.pending_upgrades += gain.levels_gained;
+            self.sounds.push(SoundEffect::LevelUp);
             self.notify(format!("NIVEL {}", self.progression.level()));
         }
         gain.levels_gained

@@ -4,6 +4,7 @@ use crate::engine::math::Vec3;
 use crate::engine::scene::Scene;
 use crate::game::hud::draw_hud;
 use crate::game::Game;
+use crate::platform::audio::Audio;
 use crate::platform::input::{InputState, Key};
 use crate::platform::time::{Clock, FixedTimestep};
 use crate::platform::window::Window;
@@ -28,6 +29,7 @@ pub struct App {
     timestep: FixedTimestep,
     simulation_time: f32,
     opening: Option<OpeningCrawl>,
+    audio: Option<Audio>,
 }
 
 impl App {
@@ -51,6 +53,7 @@ impl App {
             timestep: FixedTimestep::new(SIMULATION_STEP, MAX_STEPS_PER_FRAME),
             simulation_time: 0.0,
             opening: Some(OpeningCrawl::new()),
+            audio: Audio::open(),
         }
     }
 
@@ -62,6 +65,12 @@ impl App {
             for _ in 0..steps {
                 self.update(self.timestep.step());
                 self.input.consume_events();
+            }
+            if let Some(audio) = &mut self.audio {
+                audio.update(frame_delta);
+                for effect in self.game.take_sounds() {
+                    audio.play(effect);
+                }
             }
             self.renderer.metrics.update(frame_delta);
             self.draw();
