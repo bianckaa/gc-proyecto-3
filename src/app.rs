@@ -3,8 +3,9 @@ use crate::engine::camera::Camera;
 use crate::engine::math::Vec3;
 use crate::engine::scene::Scene;
 use crate::game::hud::draw_hud;
-use crate::game::Game;
+use crate::game::{Game, ProgramMode};
 use crate::platform::audio::Audio;
+use crate::platform::music::MusicTrack;
 use crate::platform::input::{InputState, Key};
 use crate::platform::time::{Clock, FixedTimestep};
 use crate::platform::window::Window;
@@ -67,6 +68,14 @@ impl App {
                 self.input.consume_events();
             }
             if let Some(audio) = &mut self.audio {
+                audio.set_music(Some(if self.opening.is_some() {
+                    MusicTrack::Intro
+                } else {
+                    match self.game.program_mode {
+                        ProgramMode::Menu => MusicTrack::Menu,
+                        ProgramMode::Game => MusicTrack::Battle,
+                    }
+                }));
                 audio.update(frame_delta);
                 for effect in self.game.take_sounds() {
                     audio.play(effect);

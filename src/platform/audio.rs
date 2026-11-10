@@ -1,7 +1,13 @@
-use raylib::prelude::{RaylibAudio, Sound};
+use super::music::{synthesize_track, MusicTrack};
+use crate::assets::manager::asset_path;
+use raylib::prelude::{Music, RaylibAudio, Sound};
 use std::f32::consts::TAU;
+use std::path::Path;
 
-const SAMPLE_RATE: u32 = 22_050;
+pub(super) const SAMPLE_RATE: u32 = 22_050;
+const MUSIC_VOLUME: f32 = 0.4;
+const MUSIC_FADE_OUT: f32 = 0.8;
+const MUSIC_FADE_IN: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundEffect {
@@ -58,7 +64,10 @@ struct Noise {
 
 impl Noise {
     fn next(&mut self) -> f32 {
-        self.state = self.state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.state = self
+            .state
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
         (self.state >> 8) as f32 / (1u32 << 23) as f32 - 1.0
     }
 }
@@ -112,7 +121,9 @@ pub fn synthesize(effect: SoundEffect) -> Vec<f32> {
     match effect {
         SoundEffect::Shot => {
             let mut tone = sweep(900.0, 300.0, square);
-            render(0.08, |time, progress| tone(time, progress) * (1.0 - progress) * 0.18)
+            render(0.08, |time, progress| {
+                tone(time, progress) * (1.0 - progress) * 0.18
+            })
         }
         SoundEffect::Laser => {
             let mut tone = sweep(1400.0, 180.0, saw);
@@ -123,7 +134,9 @@ pub fn synthesize(effect: SoundEffect) -> Vec<f32> {
         }
         SoundEffect::Launch => {
             let mut tone = sweep(320.0, 110.0, sine);
-            render(0.16, |time, progress| tone(time, progress) * (1.0 - progress) * 0.35)
+            render(0.16, |time, progress| {
+                tone(time, progress) * (1.0 - progress) * 0.35
+            })
         }
         SoundEffect::Impact => {
             let mut noise = Noise { state: 7 };
@@ -165,7 +178,9 @@ pub fn synthesize(effect: SoundEffect) -> Vec<f32> {
         }
         SoundEffect::RouletteTick => {
             let mut tone = sweep(1900.0, 1500.0, sine);
-            render(0.03, |time, progress| tone(time, progress) * (1.0 - progress) * 0.3)
+            render(0.03, |time, progress| {
+                tone(time, progress) * (1.0 - progress) * 0.3
+            })
         }
         SoundEffect::Damage => {
             let mut noise = Noise { state: 41 };
@@ -219,6 +234,34 @@ pub fn wav_bytes(samples: &[f32]) -> Vec<u8> {
 pub struct Audio {
     sounds: Vec<Sound<'static>>,
     cooldowns: [f32; SoundEffect::ALL.len()],
+    music: Vec<Music<'static>>,
+    playing: Option<MusicTrack>,
+    wanted: Option<MusicTrack>,
+    fade: f32,
+}
+
+fn load_music(device: &'static RaylibAudio) -> Vec<Music<'static>> {
+    let mut music = Vec::with_capacity(MusicTrack::ALL.len());
+    for track in MusicTrack::ALL {
+        if let Some(stream) = load_external_track(device, track) {
+            music.push(stream);
+            continue;
+        }
+        let bytes: &'static [u8] =
+            Box::leak(wav_bytes(&synthesize_track(track)).into_boxed_slice());
+        match device.new_music_from_memory(".wav", bytes) {
+            Ok(stream) => music.push(stream),
+            Err(_) => return Vec::new(),
+        }
+    }
+    music
+}
+
+fn load_external_track(device: &'static RaylibAudio, track: MusicTrack) -> Option<Music<'static>> {
+    let path = asset_path(Path::new(track.external_file()?))?;
+    let mut stream = device.new_music(path.to_str()?).ok()?;
+    stream.set_looping(track != MusicTrack::Intro);
+    Some(stream)
 }
 
 impl Audio {
@@ -234,12 +277,46 @@ impl Audio {
         Some(Self {
             sounds,
             cooldowns: [0.0; SoundEffect::ALL.len()],
+            music: load_music(device),
+            playing: None,
+            wanted: None,
+            fade: 0.0,
         })
+    }
+
+    pub fn set_music(&mut self, track: Option<MusicTrack>) {
+        self.wanted = track;
     }
 
     pub fn update(&mut self, delta_time: f32) {
         for cooldown in &mut self.cooldowns {
             *cooldown = (*cooldown - delta_time).max(0.0);
+        }
+        self.update_music(delta_time);
+    }
+
+    fn update_music(&mut self, delta_time: f32) {
+        if self.music.is_empty() {
+            return;
+        }
+        if self.playing != self.wanted {
+            self.fade = (self.fade - delta_time / MUSIC_FADE_OUT).max(0.0);
+            if self.fade <= 0.0 {
+                if let Some(track) = self.playing {
+                    self.music[track.index()].stop_stream();
+                }
+                self.playing = self.wanted;
+                if let Some(track) = self.playing {
+                    self.music[track.index()].play_stream();
+                }
+            }
+        } else if self.fade < 1.0 {
+            self.fade = (self.fade + delta_time / MUSIC_FADE_IN).min(1.0);
+        }
+        if let Some(track) = self.playing {
+            let stream = &self.music[track.index()];
+            stream.set_volume(MUSIC_VOLUME * self.fade * self.fade);
+            stream.update_stream();
         }
     }
 
@@ -262,8 +339,16 @@ mod tests {
         for effect in SoundEffect::ALL {
             let samples = synthesize(effect);
             assert!(!samples.is_empty(), "{:?}", effect);
-            assert!(samples.iter().any(|sample| sample.abs() > 0.01), "{:?}", effect);
-            assert!(samples.iter().all(|sample| sample.is_finite()), "{:?}", effect);
+            assert!(
+                samples.iter().any(|sample| sample.abs() > 0.01),
+                "{:?}",
+                effect
+            );
+            assert!(
+                samples.iter().all(|sample| sample.is_finite()),
+                "{:?}",
+                effect
+            );
         }
     }
 
@@ -273,6 +358,9 @@ mod tests {
         assert_eq!(&bytes[0..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WAVE");
         assert_eq!(bytes.len(), 44 + 6);
-        assert_eq!(u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]), 6);
+        assert_eq!(
+            u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]),
+            6
+        );
     }
 }

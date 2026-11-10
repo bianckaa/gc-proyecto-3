@@ -130,6 +130,16 @@ La pantalla de resultados muestra tiempo sobrevivido, nivel, enemigos y planetas
 
 Todos los efectos se generan por código como ondas (sin archivos de audio): disparos, láser, impactos, explosiones, destrucción de planetas, subida de nivel, ruleta, daño, alarma del último minuto y colapso. Código: `src/platform/audio.rs`.
 
+La música de fondo también se sintetiza por código, con una composición original de estilo épico espacial: metales, cuerdas, timbales y campanas con eco. No reproduce ninguna melodía existente. Hay tres pistas:
+
+- **Intro (56 s, una sola vez):** sigue los tiempos del texto de apertura. Calma hasta que aparece el título, fanfarria de metales en Re mayor con redoble de timbales, tema pensativo de corno mientras sube el texto y un final que crece durante el viaje de cámara.
+- **Menú (64 s, en bucle):** tema lento y misterioso en Re menor, con corno solista, cuerdas y campanas.
+- **Partida (64 s, en bucle):** marcha en Sol menor a 120 pulsos por minuto que crece en cuatro secciones (ostinato, tema, variación y final con toda la orquesta).
+
+Si existe `assets/music/intro.ogg`, la intro reproduce ese archivo una sola vez en lugar de la fanfarria generada. Si falta o no se puede abrir, suena la fanfarria original.
+
+Al cambiar de pista (intro, menú y partida) la música se funde. Código: `src/platform/music.rs`.
+
 ## Características de la rúbrica y dónde se ven
 
 | Característica | Dónde se ve | Código |
