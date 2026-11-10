@@ -24,7 +24,7 @@ use crate::debug::metrics::Metrics;
 use black_hole::BlackHoleEffect;
 use culling::Frustum;
 use depth::DepthBuffer;
-use dithering::{dither, screen_door_visible};
+use dithering::{dither, dither_levels, screen_door_visible};
 use framebuffer::{Color, Framebuffer};
 use heat_haze::HeatHaze;
 use lighting::{realistic_color, PointLight};
@@ -39,6 +39,7 @@ use warp_effect::WarpEffect;
 
 const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
+const REALISTIC_DITHER_LEVELS: u32 = 6;
 const STAR_SEED: u32 = 20_260_001;
 const STAR_COUNT: usize = 1800;
 const NORMAL_MAP_SEED: u32 = 20_260_002;
@@ -230,14 +231,20 @@ impl Renderer {
                         normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
                     if material.shader == ShaderKind::RockyPlanet {
-                        return Some(FragmentOutput::opaque(Color::from_unit(realistic_color(
+                        let realistic = realistic_color(
                             surface.color,
                             surface.intensity,
                             (fragment.world_position - center).normalize(),
                             fragment.world_position,
                             &light,
                             eye,
-                        ))));
+                        );
+                        let color = if dithering_enabled {
+                            dither_levels(realistic, REALISTIC_DITHER_LEVELS, fragment.x, fragment.y)
+                        } else {
+                            Color::from_unit(realistic)
+                        };
+                        return Some(FragmentOutput::opaque(color));
                     }
                     if material.shader == ShaderKind::GasPlanet {
                         let color = Color::from_unit(
