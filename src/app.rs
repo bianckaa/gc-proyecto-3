@@ -5,6 +5,7 @@ use crate::engine::scene::Scene;
 use crate::game::hud::draw_hud;
 use crate::game::{Game, ProgramMode};
 use crate::platform::audio::Audio;
+use crate::platform::image_file::{load_raster, ENDING_IMAGE_FILE};
 use crate::platform::music::MusicTrack;
 use crate::platform::input::{InputState, Key};
 use crate::platform::time::{Clock, FixedTimestep};
@@ -53,7 +54,9 @@ impl App {
             clock: Clock::start(),
             timestep: FixedTimestep::new(SIMULATION_STEP, MAX_STEPS_PER_FRAME),
             simulation_time: 0.0,
-            opening: Some(OpeningCrawl::new()),
+            opening: Some(
+                OpeningCrawl::new().with_ending_image(load_raster(ENDING_IMAGE_FILE)),
+            ),
             audio: Audio::open(),
         }
     }
