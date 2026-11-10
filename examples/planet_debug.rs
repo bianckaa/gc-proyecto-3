@@ -72,30 +72,35 @@ fn main() {
         emissive: Vec3::new(0.08, 0.025, 0.0),
         shader: ShaderKind::Sun,
         outline: true,
+        opacity: 1.0,
     };
     let core_material = Material {
         base_color: Vec3::new(0.38, 0.48, 0.54),
         emissive: Vec3::new(0.01, 0.025, 0.03),
         shader: ShaderKind::CorePlanet,
         outline: true,
+        opacity: 1.0,
     };
     let rocky_material = Material {
         base_color: Vec3::new(0.40, 0.18, 0.07),
         emissive: Vec3::default(),
         shader: ShaderKind::RockyPlanet,
         outline: true,
+        opacity: 1.0,
     };
     let gas_material = Material {
         base_color: Vec3::new(0.20, 0.46, 0.72),
         emissive: Vec3::new(0.0, 0.015, 0.025),
         shader: ShaderKind::GasPlanet,
         outline: false,
+        opacity: 1.0,
     };
     let droid_material = Material {
         base_color: Vec3::new(0.46, 0.48, 0.52),
         emissive: Vec3::default(),
         shader: ShaderKind::DroidPlanet,
         outline: true,
+        opacity: 1.0,
     };
     let mut camera = Camera::new(
         Vec3::new(0.0, 0.0, INITIAL_CAMERA_DISTANCE),
@@ -112,10 +117,16 @@ fn main() {
     let mut orbit_yaw = 0.0_f32;
     let mut orbit_pitch = 0.0_f32;
     let mut camera_distance = INITIAL_CAMERA_DISTANCE;
-    let mut selection = if std::env::args().any(|argument| argument == "--rocky") {
-        PlanetSelection::Rocky
-    } else {
-        PlanetSelection::Droid
+    let requested_planet = std::env::args()
+        .skip_while(|argument| argument != "--planet")
+        .nth(1)
+        .or_else(|| std::env::args().any(|argument| argument == "--rocky").then(|| "rocky".to_owned()));
+    let mut selection = match requested_planet.as_deref() {
+        Some("rocky") => PlanetSelection::Rocky,
+        Some("gas") => PlanetSelection::Gas,
+        Some("core") => PlanetSelection::Core,
+        Some("sun") => PlanetSelection::Sun,
+        _ => PlanetSelection::Droid,
     };
     let mut sun_heat_haze = true;
     let mut rendered_frames = 0_u32;

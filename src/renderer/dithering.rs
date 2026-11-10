@@ -76,6 +76,19 @@ mod tests {
     }
 
     #[test]
+    fn screen_door_coverage_grows_with_opacity() {
+        let coverage = |opacity: f32| {
+            (0..4)
+                .flat_map(|y| (0..4).map(move |x| (x, y)))
+                .filter(|&(x, y)| screen_door_visible(opacity, x, y))
+                .count()
+        };
+        assert_eq!(coverage(0.0), 0);
+        assert!(coverage(0.25) < coverage(0.75));
+        assert_eq!(coverage(1.0), 16);
+    }
+
+    #[test]
     fn screen_door_transparency_preserves_half_the_background() {
         let visible = (0..4)
             .flat_map(|y| (0..4).map(move |x| (x, y)))

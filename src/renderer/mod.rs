@@ -68,6 +68,7 @@ pub struct Material {
     pub emissive: Vec3,
     pub shader: ShaderKind,
     pub outline: bool,
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +101,15 @@ impl LodGroup {
             &self.levels[2]
         }
     }
+}
+
+fn effective_opacity(material: &Material) -> f32 {
+    let shader_opacity = if material.shader == ShaderKind::GasPlanet {
+        GAS_PLANET_OPACITY
+    } else {
+        1.0
+    };
+    material.opacity.clamp(0.0, 1.0) * shader_opacity
 }
 
 struct QueuedLine {
@@ -208,6 +218,10 @@ impl Renderer {
                 .filter(|_| self.lod_enabled)
                 .map_or(object.mesh, |group| group.select(relative_distance));
             let material = object.material;
+            let opacity = effective_opacity(&material);
+            if opacity <= 0.0 {
+                continue;
+            }
             let object_id = index as u32 + 1;
             let stats = pipeline::draw_mesh(
                 &mut self.framebuffer,
@@ -217,8 +231,8 @@ impl Renderer {
                 view_projection,
                 |fragment| {
                     if dithering_enabled
-                        && material.shader == ShaderKind::GasPlanet
-                        && !screen_door_visible(GAS_PLANET_OPACITY, fragment.x, fragment.y)
+                        && opacity < 1.0
+                        && !screen_door_visible(opacity, fragment.x, fragment.y)
                     {
                         return None;
                     }
@@ -230,44 +244,38 @@ impl Renderer {
                         time,
                         normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
-                    if material.shader == ShaderKind::RockyPlanet {
+                    let realistic_normal = match material.shader {
+                        ShaderKind::RockyPlanet | ShaderKind::GasPlanet => {
+                            Some((fragment.world_position - center).normalize())
+                        }
+                        ShaderKind::CorePlanet | ShaderKind::DroidPlanet => Some(fragment.normal),
+                        _ => None,
+                    };
+                    let color = if let Some(normal) = realistic_normal {
                         let realistic = realistic_color(
                             surface.color,
                             surface.intensity,
-                            (fragment.world_position - center).normalize(),
+                            normal,
                             fragment.world_position,
                             &light,
                             eye,
                         );
-                        let color = if dithering_enabled {
+                        if dithering_enabled {
                             dither_levels(realistic, REALISTIC_DITHER_LEVELS, fragment.x, fragment.y)
                         } else {
                             Color::from_unit(realistic)
-                        };
-                        return Some(FragmentOutput::opaque(color));
-                    }
-                    if material.shader == ShaderKind::GasPlanet {
-                        let color = Color::from_unit(
-                            surface.color * (0.72 + surface.intensity * 0.28),
-                        );
-                        if dithering_enabled {
-                            Some(FragmentOutput::opaque(color))
-                        } else {
-                            Some(FragmentOutput {
-                                color,
-                                opacity: GAS_PLANET_OPACITY,
-                            })
                         }
+                    } else if material.shader == ShaderKind::GasPlanet {
+                        Color::from_unit(surface.color * (0.72 + surface.intensity * 0.28))
                     } else if dithering_enabled {
-                        Some(FragmentOutput::opaque(dither(
-                            surface,
-                            fragment.x,
-                            fragment.y,
-                        )))
+                        dither(surface, fragment.x, fragment.y)
                     } else {
-                        Some(FragmentOutput::opaque(Color::from_unit(
-                            surface.color * surface.intensity,
-                        )))
+                        Color::from_unit(surface.color * surface.intensity)
+                    };
+                    if dithering_enabled || opacity >= 1.0 {
+                        Some(FragmentOutput::opaque(color))
+                    } else {
+                        Some(FragmentOutput { color, opacity })
                     }
                 },
             );
