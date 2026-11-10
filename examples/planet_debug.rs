@@ -72,30 +72,35 @@ fn main() {
         emissive: Vec3::new(0.08, 0.025, 0.0),
         shader: ShaderKind::Sun,
         outline: true,
+        opacity: 1.0,
     };
     let core_material = Material {
         base_color: Vec3::new(0.38, 0.48, 0.54),
         emissive: Vec3::new(0.01, 0.025, 0.03),
         shader: ShaderKind::CorePlanet,
         outline: true,
+        opacity: 1.0,
     };
     let rocky_material = Material {
         base_color: Vec3::new(0.40, 0.18, 0.07),
         emissive: Vec3::default(),
         shader: ShaderKind::RockyPlanet,
         outline: true,
+        opacity: 1.0,
     };
     let gas_material = Material {
         base_color: Vec3::new(0.20, 0.46, 0.72),
         emissive: Vec3::new(0.0, 0.015, 0.025),
         shader: ShaderKind::GasPlanet,
         outline: false,
+        opacity: 1.0,
     };
     let droid_material = Material {
         base_color: Vec3::new(0.46, 0.48, 0.52),
         emissive: Vec3::default(),
         shader: ShaderKind::DroidPlanet,
         outline: true,
+        opacity: 1.0,
     };
     let mut camera = Camera::new(
         Vec3::new(0.0, 0.0, INITIAL_CAMERA_DISTANCE),

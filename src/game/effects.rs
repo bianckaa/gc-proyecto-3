@@ -153,6 +153,17 @@ impl Effects {
         self.ring(position, 3.5, ENEMY_COLORS[0], 0.45);
     }
 
+    pub fn enemy_arrival(&mut self, position: Vec3) {
+        self.ring(position, 3.0, ENEMY_COLORS[0], 0.6);
+        self.burst(
+            position,
+            [ENEMY_COLORS[0], Color::new(255, 255, 255)],
+            10,
+            5.0,
+            0.45,
+        );
+    }
+
     pub fn bomb_explosion(&mut self, position: Vec3, radius: f32) {
         self.burst(position, [Color::new(255, 140, 40), Color::new(255, 240, 200)], 40, radius * 2.5, 0.6);
         self.ring(position, radius, Color::new(255, 170, 60), 0.4);

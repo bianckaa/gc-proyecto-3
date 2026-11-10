@@ -38,7 +38,8 @@ use roulette::Roulette;
 use upgrades::{apply_option, planet_reward, upgrade_options, Reward};
 use crate::platform::window::TextLabel;
 use crate::world::generation::SeededRandom;
-use enemies::{EnemySwarm, ENEMY_RENDER_SCALE};
+use crate::renderer::culling::Frustum;
+use enemies::{EnemySwarm, PlayerMotion, ENEMY_RENDER_SCALE};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use progression::PlayerProgression;
@@ -51,6 +52,7 @@ use wave_director::WaveDirector;
 use weapons::{Aim, CombatEvents, Modifiers, Targets, WeaponSystem};
 
 const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
+const ENEMY_VISIBILITY_RADIUS: f32 = 3.0;
 const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
 const ENEMY_MODEL_FILE: &str = "ENEMY1.obj";
 const SURFACE_CRYSTAL_FILE: &str = "crystal.obj";
@@ -634,17 +636,40 @@ impl Game {
         }
         self.ship.speed_multiplier = self.buffs.multiplier(BuffKind::ShipSpeed);
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
+            let frustum = Frustum::from_view_projection(camera.view_projection_matrix());
+            let is_visible =
+                |position: Vec3| frustum.contains_sphere(position, ENEMY_VISIBILITY_RADIUS);
+            let motion = PlayerMotion {
+                position: self.ship.position,
+                velocity: self.ship.velocity,
+                forward: self.ship.forward(),
+            };
+            let capacity = self.wave_director.settings(self.session.elapsed()).max_active;
+            let recycled = self.run_enemies.recycle_stragglers(
+                motion,
+                &self.colliders,
+                is_visible,
+                capacity,
+                delta_time,
+            );
+            for position in recycled {
+                self.effects.enemy_arrival(position);
+            }
             let spawn_count = self.wave_director.update(
                 self.session.elapsed(),
-                self.run_enemies.active_count(),
+                self.run_enemies.engaged_count(),
                 delta_time,
             );
             for _ in 0..spawn_count {
-                self.run_enemies.spawn_near_player(
-                    self.ship.position,
-                    self.ship.forward(),
+                let id = self.run_enemies.spawn_around(
+                    motion,
                     self.progression.level(),
+                    &self.colliders,
+                    is_visible,
                 );
+                if let Some(position) = self.run_enemies.position_of(id) {
+                    self.effects.enemy_arrival(position);
+                }
             }
             let aim = self.aim();
             let modifiers = self.weapon_modifiers();
@@ -1578,15 +1603,18 @@ impl Game {
             } else {
                 (self.ship.position - enemy.position).normalize()
             };
+            let mut material = self.materials.enemy;
+            material.opacity = enemy.arrival_progress();
+            material.outline = material.outline && enemy.is_materialized();
             scene.push(Entity {
                 model: Model::Mesh(self.models.enemy),
-                material: self.materials.enemy,
+                material,
                 transform: Transform::new(enemy.position)
                     .with_rotation(
                         basis_rotation(forward, Vec3::new(0.0, 1.0, 0.0))
                             * Mat4::rotation_y(MODEL_FORWARD_CORRECTION),
                     )
-                    .with_uniform_scale(ENEMY_RENDER_SCALE),
+                    .with_uniform_scale(ENEMY_RENDER_SCALE * enemy.arrival_scale()),
                 radius: ENEMY_RENDER_SCALE,
             });
         }

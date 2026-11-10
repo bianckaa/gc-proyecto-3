@@ -70,6 +70,7 @@ const fn material(base_color: Vec3, emissive: Vec3, shader: ShaderKind, outline:
         emissive,
         shader,
         outline,
+        opacity: 1.0,
     }
 }
 
