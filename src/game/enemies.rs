@@ -2,17 +2,17 @@ use crate::engine::collision::{resolve_all, Collider};
 use crate::engine::math::Vec3;
 use crate::world::generation::SeededRandom;
 
-pub const ENEMY_RADIUS: f32 = 1.0;
-pub const ENEMY_RENDER_SCALE: f32 = 0.9;
+pub const ENEMY_RADIUS: f32 = 1.25;
+pub const ENEMY_RENDER_SCALE: f32 = 1.125;
 pub const CONTACT_DAMAGE: f32 = 10.0;
 pub const ARRIVAL_DURATION: f32 = 0.6;
 
 const BASE_HEALTH: f32 = 20.0;
 const HEALTH_PER_LEVEL: f32 = 0.35;
-const MOVE_SPEED: f32 = 7.0;
-const CATCH_UP_SPEED: f32 = 30.0;
-const CATCH_UP_START: f32 = 40.0;
-const CATCH_UP_FULL: f32 = 140.0;
+const MOVE_SPEED: f32 = 18.0;
+const CATCH_UP_SPEED: f32 = 60.0;
+const CATCH_UP_START: f32 = 50.0;
+const CATCH_UP_FULL: f32 = 180.0;
 const MIN_SPAWN_DISTANCE: f32 = 75.0;
 const MAX_SPAWN_DISTANCE: f32 = 90.0;
 const SPAWN_JITTER: f32 = 0.65;
@@ -20,7 +20,7 @@ const SPAWN_LOOKAHEAD: f32 = 2.5;
 const SPAWN_ATTEMPTS: usize = 8;
 const SPAWN_SPREAD_STEP: f32 = 0.5;
 const SPAWN_CLEARANCE: f32 = 4.0;
-const FAST_SHIP_SPEED: f32 = 14.0;
+const FAST_SHIP_SPEED: f32 = 21.0;
 const ENGAGE_DISTANCE: f32 = 200.0;
 const RECYCLE_GRACE: f32 = 1.5;
 const ARRIVAL_START_SCALE: f32 = 0.6;
@@ -687,24 +687,33 @@ mod tests {
     }
 
     #[test]
-    fn pursuit_speeds_up_with_distance_but_never_beats_boost() {
+    fn pursuit_matches_cruise_and_rubber_bands_at_distance() {
         assert_eq!(pursuit_speed(10.0), MOVE_SPEED);
         assert!(pursuit_speed(90.0) > MOVE_SPEED);
         assert_eq!(pursuit_speed(500.0), CATCH_UP_SPEED);
-        assert!(CATCH_UP_SPEED < 36.0);
+        assert!(MOVE_SPEED < FAST_SHIP_SPEED);
         assert!(CATCH_UP_SPEED > FAST_SHIP_SPEED);
     }
 
     #[test]
-    fn weapon_impulse_knocks_enemy_back_and_decays() {
+    fn common_enemy_is_twenty_five_percent_larger() {
+        assert_eq!(ENEMY_RADIUS, 1.25);
+        assert_eq!(ENEMY_RENDER_SCALE, 0.9 * 1.25);
+    }
+
+    #[test]
+    fn weapon_impulse_resists_pursuit_and_decays() {
         let mut swarm = EnemySwarm::new();
+        let mut control = EnemySwarm::new();
         let id = swarm.spawn_at(Vec3::new(0.0, 0.0, -10.0), 1);
+        control.spawn_at(Vec3::new(0.0, 0.0, -10.0), 1);
         swarm.damage_with_knockback(id, 1.0, Vec3::new(0.0, 0.0, -12.0));
         let initial_knockback = swarm.enemies()[0].knockback_velocity.length();
 
         swarm.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 1, &[], 0.1);
+        control.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 1, &[], 0.1);
 
-        assert!(swarm.enemies()[0].position.z < -10.0);
+        assert!(swarm.enemies()[0].position.z < control.enemies()[0].position.z);
         assert!(swarm.enemies()[0].knockback_velocity.length() < initial_knockback);
     }
 }

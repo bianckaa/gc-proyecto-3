@@ -17,7 +17,7 @@ pub fn stats(step: f32) -> WeaponStats {
         cooldown: 0.30 - 0.03 * step,
         size: 0.18,
         knockback: 12.0,
-        speed: 52.0,
+        speed: 156.0,
         count: 1,
     }
 }
@@ -113,5 +113,10 @@ mod tests {
         }
         assert_eq!(destroyed, 1);
         assert_eq!(enemies.active_count(), 0);
+    }
+
+    #[test]
+    fn normal_rays_use_the_tripled_projectile_speed() {
+        assert_eq!(super::stats(0.0).speed, 156.0);
     }
 }

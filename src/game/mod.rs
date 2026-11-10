@@ -51,6 +51,7 @@ use warp::{Destination, Warp, WarpEvent, WarpState};
 use wave_director::WaveDirector;
 use weapons::{Aim, CombatEvents, Modifiers, Targets, WeaponSystem};
 
+const GAME_FLIGHT_SPEED_MULTIPLIER: f32 = 1.5;
 const SPHERE_SUBDIVISIONS: [u32; 3] = [4, 3, 1];
 const ENEMY_VISIBILITY_RADIUS: f32 = 3.0;
 const ASTEROID_SUBDIVISIONS: [u32; 3] = [2, 1, 0];
@@ -593,6 +594,10 @@ impl Game {
         } else {
             controls
         };
+        self.ship.speed_multiplier = flight_speed_multiplier(
+            self.program_mode,
+            self.buffs.multiplier(BuffKind::ShipSpeed),
+        );
 
         if self.simulation_frozen() {
         } else if self.warp.is_traveling() {
@@ -635,7 +640,6 @@ impl Game {
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
             self.buffs.update(delta_time);
         }
-        self.ship.speed_multiplier = self.buffs.multiplier(BuffKind::ShipSpeed);
         if self.program_mode == ProgramMode::Game && self.session.state() == RunState::Playing {
             let frustum = Frustum::from_view_projection(camera.view_projection_matrix());
             let is_visible =
@@ -1776,6 +1780,14 @@ impl Game {
     }
 }
 
+fn flight_speed_multiplier(mode: ProgramMode, buff_multiplier: f32) -> f32 {
+    if mode == ProgramMode::Game {
+        GAME_FLIGHT_SPEED_MULTIPLIER * buff_multiplier
+    } else {
+        1.0
+    }
+}
+
 fn draw_summary(renderer: &mut Renderer, summary: &RunSummary, remaining: f32) -> Vec<TextLabel> {
     const WIDTH: i32 = 260;
     const HEIGHT: i32 = 150;
@@ -1940,6 +1952,13 @@ pub fn ship_controls(input: &InputState) -> ShipControls {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flight_speed_bonus_only_applies_in_game() {
+        assert_eq!(flight_speed_multiplier(ProgramMode::Menu, 1.75), 1.0);
+        assert_eq!(flight_speed_multiplier(ProgramMode::Game, 1.0), 1.5);
+        assert_eq!(flight_speed_multiplier(ProgramMode::Game, 1.25), 1.875);
+    }
 
     fn test_game() -> (Game, Camera) {
         let mut assets = AssetManager::new();
