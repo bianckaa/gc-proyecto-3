@@ -126,6 +126,7 @@ const START_FLASH_DURATION: f32 =
 const PLAYER_COLOR: Vec3 = Vec3::new(0.36, 1.0, 0.36);
 const PLAYER_GLOW: Vec3 = Vec3::new(0.05, 0.2, 0.05);
 const ENEMY_COLOR: Vec3 = Vec3::new(0.46, 0.11, 0.68);
+const ENEMY_GLOW: Vec3 = Vec3::new(0.30, 0.28, 0.35);
 const SAND_COLOR: Vec3 = Vec3::new(0.85, 0.76, 0.6);
 const CRYSTAL_COLOR: Vec3 = Vec3::new(0.75, 0.31, 1.0);
 const CRYSTAL_GLOW: Vec3 = Vec3::new(0.12, 0.03, 0.18);
@@ -438,7 +439,7 @@ impl Game {
             models,
             materials: Materials {
                 ship: glowing(PLAYER_COLOR, PLAYER_GLOW, ShaderKind::EtaPlayer),
-                enemy: solid(ENEMY_COLOR, ShaderKind::EnemyShip),
+                enemy: glowing(ENEMY_COLOR, ENEMY_GLOW, ShaderKind::EnemyShip),
                 asteroid: solid(SAND_COLOR, ShaderKind::Rocky),
                 crystal: glowing(CRYSTAL_COLOR, CRYSTAL_GLOW, ShaderKind::Lambert),
                 boulder: solid(BOULDER_COLOR, ShaderKind::Rocky),
