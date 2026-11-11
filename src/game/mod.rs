@@ -4,6 +4,7 @@ pub mod enemies;
 pub mod hud;
 pub mod player;
 pub mod progression;
+mod radar;
 pub mod roulette;
 pub mod run_world;
 pub mod session;
@@ -72,15 +73,6 @@ const FOLLOW_SMOOTHING: f32 = 6.0;
 const EVASIVE_LOOP_CAMERA_SMOOTHING: f32 = 1.5;
 const CROSSHAIR_PREVIEW_DISTANCE: f32 = 45.0;
 const CROSSHAIR_SCREEN_MARGIN: i32 = 6;
-const RADAR_SIZE: i32 = 72;
-const RADAR_LEFT: i32 = FRAMEBUFFER_WIDTH as i32 - RADAR_SIZE - 6;
-const RADAR_TOP: i32 = 18;
-const RADAR_PADDING: i32 = 5;
-const RADAR_RANGE: f32 = 160.0;
-const RADAR_FRAME_COLOR: Color = Color::new(120, 130, 150);
-const RADAR_PLAYER_COLOR: Color = Color::new(90, 255, 130);
-const RADAR_ENEMY_COLOR: Color = Color::new(255, 64, 64);
-const RADAR_ARRIVAL_COLOR: Color = Color::new(255, 210, 80);
 const DEFAULT_FOLLOW_DISTANCE: f32 = 4.6;
 const MIN_FOLLOW_DISTANCE: f32 = 3.0;
 const MAX_FOLLOW_DISTANCE: f32 = 14.0;
@@ -868,64 +860,17 @@ impl Game {
         if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing {
             return;
         }
-        renderer.draw_rect_2d(RADAR_LEFT, RADAR_TOP, RADAR_SIZE, RADAR_SIZE, Color::BLACK);
-        for (x0, y0, x1, y1) in [
-            (RADAR_LEFT, RADAR_TOP, RADAR_LEFT + RADAR_SIZE, RADAR_TOP),
-            (
-                RADAR_LEFT,
-                RADAR_TOP + RADAR_SIZE,
-                RADAR_LEFT + RADAR_SIZE,
-                RADAR_TOP + RADAR_SIZE,
-            ),
-            (RADAR_LEFT, RADAR_TOP, RADAR_LEFT, RADAR_TOP + RADAR_SIZE),
-            (
-                RADAR_LEFT + RADAR_SIZE,
-                RADAR_TOP,
-                RADAR_LEFT + RADAR_SIZE,
-                RADAR_TOP + RADAR_SIZE,
-            ),
-        ] {
-            renderer.draw_line_2d(x0, y0, x1, y1, RADAR_FRAME_COLOR);
-        }
-        let center_x = RADAR_LEFT + RADAR_SIZE / 2;
-        let center_y = RADAR_TOP + RADAR_SIZE / 2;
-        renderer.draw_line_2d(
-            center_x,
-            RADAR_TOP + RADAR_PADDING,
-            center_x,
-            RADAR_TOP + RADAR_SIZE - RADAR_PADDING,
-            Color::new(35, 45, 55),
+        radar::draw(
+            renderer,
+            self.ship.position,
+            self.ship.right(),
+            self.ship.up(),
+            self.ship.forward(),
+            self.run_enemies.enemies().iter().map(|enemy| radar::RadarContact {
+                position: enemy.position,
+                arriving: !enemy.is_materialized(),
+            }),
         );
-        renderer.draw_line_2d(
-            RADAR_LEFT + RADAR_PADDING,
-            center_y,
-            RADAR_LEFT + RADAR_SIZE - RADAR_PADDING,
-            center_y,
-            Color::new(35, 45, 55),
-        );
-        for enemy in self.run_enemies.enemies() {
-            let (x, y, altitude) = radar_enemy_position(
-                self.ship.position,
-                self.ship.right(),
-                self.ship.forward(),
-                self.ship.up(),
-                enemy.position,
-            );
-            let color = if enemy.is_materialized() {
-                RADAR_ENEMY_COLOR
-            } else {
-                RADAR_ARRIVAL_COLOR
-            };
-            renderer.draw_rect_2d(x - 1, y - 1, 3, 3, color);
-            if altitude > 10.0 {
-                renderer.draw_line_2d(x, y - 4, x, y - 2, color);
-            } else if altitude < -10.0 {
-                renderer.draw_line_2d(x, y + 2, x, y + 4, color);
-            }
-        }
-        renderer.draw_line_2d(center_x, center_y - 4, center_x - 3, center_y + 3, RADAR_PLAYER_COLOR);
-        renderer.draw_line_2d(center_x, center_y - 4, center_x + 3, center_y + 3, RADAR_PLAYER_COLOR);
-        renderer.draw_line_2d(center_x - 3, center_y + 3, center_x + 3, center_y + 3, RADAR_PLAYER_COLOR);
     }
 
     fn ship_visible(&self) -> bool {
@@ -1914,31 +1859,6 @@ fn flight_speed_multiplier(mode: ProgramMode, buff_multiplier: f32) -> f32 {
     }
 }
 
-fn radar_enemy_position(
-    ship_position: Vec3,
-    ship_right: Vec3,
-    ship_forward: Vec3,
-    ship_up: Vec3,
-    enemy_position: Vec3,
-) -> (i32, i32, f32) {
-    let offset = enemy_position - ship_position;
-    let mut local_x = offset.dot(ship_right) / RADAR_RANGE;
-    let mut local_y = -offset.dot(ship_forward) / RADAR_RANGE;
-    let edge = local_x.abs().max(local_y.abs());
-    if edge > 1.0 {
-        local_x /= edge;
-        local_y /= edge;
-    }
-    let half = (RADAR_SIZE / 2 - RADAR_PADDING) as f32;
-    let center_x = RADAR_LEFT + RADAR_SIZE / 2;
-    let center_y = RADAR_TOP + RADAR_SIZE / 2;
-    (
-        center_x + (local_x * half).round() as i32,
-        center_y + (local_y * half).round() as i32,
-        offset.dot(ship_up),
-    )
-}
-
 fn draw_summary(renderer: &mut Renderer, summary: &RunSummary, remaining: f32) -> Vec<TextLabel> {
     const WIDTH: i32 = 260;
     const HEIGHT: i32 = 150;
@@ -2128,26 +2048,6 @@ mod tests {
         assert!(turned_position.0 < FRAMEBUFFER_WIDTH as i32);
         assert!(turned_position.1 >= CROSSHAIR_SCREEN_MARGIN);
         assert!(turned_position.1 < FRAMEBUFFER_HEIGHT as i32);
-    }
-
-    #[test]
-    fn radar_rotates_with_the_ship_and_clamps_distant_enemies() {
-        let ship = Vec3::default();
-        let right = Vec3::new(1.0, 0.0, 0.0);
-        let forward = Vec3::new(0.0, 0.0, -1.0);
-        let up = Vec3::new(0.0, 1.0, 0.0);
-        let center_x = RADAR_LEFT + RADAR_SIZE / 2;
-        let center_y = RADAR_TOP + RADAR_SIZE / 2;
-
-        let ahead = radar_enemy_position(ship, right, forward, up, Vec3::new(0.0, 0.0, -40.0));
-        let starboard = radar_enemy_position(ship, right, forward, up, Vec3::new(40.0, 0.0, 0.0));
-        let distant = radar_enemy_position(ship, right, forward, up, Vec3::new(800.0, 0.0, 0.0));
-        let above = radar_enemy_position(ship, right, forward, up, Vec3::new(0.0, 30.0, 0.0));
-
-        assert!(ahead.1 < center_y);
-        assert!(starboard.0 > center_x);
-        assert_eq!(distant.0, RADAR_LEFT + RADAR_SIZE - RADAR_PADDING);
-        assert!(above.2 > 0.0);
     }
 
     fn test_game() -> (Game, Camera) {

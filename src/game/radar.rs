@@ -152,7 +152,7 @@ fn project(point: Vec3) -> Option<(i32, i32)> {
     let center_x = LEFT as f32 + SIZE as f32 * 0.5;
     let center_y = TOP as f32 + SIZE as f32 * 0.5;
     Some((
-        (center_x + clip.x / clip.w * SCREEN_SCALE).round() as i32,
+        (center_x - clip.x / clip.w * SCREEN_SCALE).round() as i32,
         (center_y - clip.y / clip.w * SCREEN_SCALE).round() as i32,
     ))
 }
@@ -180,11 +180,56 @@ mod tests {
     fn virtual_radar_camera_keeps_player_centered_and_separates_depth_and_height() {
         let center = project(Vec3::default()).unwrap();
         let above = project(Vec3::new(0.0, 1.0, 0.0)).unwrap();
+        let starboard = project(Vec3::new(1.0, 0.0, 0.0)).unwrap();
         let front = project(Vec3::new(0.0, 0.0, 1.0)).unwrap();
         let behind = project(Vec3::new(0.0, 0.0, -1.0)).unwrap();
 
         assert_eq!(center, (LEFT + SIZE / 2, TOP + SIZE / 2));
         assert!(above.1 < center.1);
+        assert!(starboard.0 > center.0);
         assert_ne!(front, behind);
+        for corner in CUBE_CORNERS {
+            let point = project(corner).unwrap();
+            assert!(point.0 >= LEFT && point.0 <= LEFT + SIZE);
+            assert!(point.1 >= TOP && point.1 <= TOP + SIZE);
+        }
+    }
+
+    #[test]
+    fn radar_draws_player_front_rear_and_arriving_contacts() {
+        let mut renderer = Renderer::new();
+        let contacts = [
+            RadarContact {
+                position: Vec3::new(40.0, 0.0, -40.0),
+                arriving: false,
+            },
+            RadarContact {
+                position: Vec3::new(-40.0, 0.0, 40.0),
+                arriving: false,
+            },
+            RadarContact {
+                position: Vec3::new(0.0, 50.0, -60.0),
+                arriving: true,
+            },
+        ];
+        draw(
+            &mut renderer,
+            Vec3::default(),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            contacts,
+        );
+        let contains = |color: Color| {
+            renderer
+                .pixels()
+                .chunks_exact(4)
+                .any(|pixel| pixel[..3] == [color.r, color.g, color.b])
+        };
+
+        assert!(contains(PLAYER));
+        assert!(contains(ENEMY_FRONT));
+        assert!(contains(ENEMY_BEHIND));
+        assert!(contains(ARRIVING));
     }
 }
