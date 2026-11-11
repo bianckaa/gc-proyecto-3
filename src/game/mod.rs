@@ -1,3 +1,4 @@
+pub mod boss_planets;
 pub mod buffs;
 pub mod effects;
 pub mod enemies;
@@ -40,6 +41,7 @@ use upgrades::{apply_option, planet_reward, upgrade_options, Reward};
 use crate::platform::window::TextLabel;
 use crate::world::generation::SeededRandom;
 use crate::renderer::culling::Frustum;
+use boss_planets::{BossPlanets, ENGAGE_RANGE as BOSS_ENGAGE_RANGE};
 use enemies::{EnemyKind, EnemySwarm, PlayerMotion, ENEMY_RENDER_SCALE};
 use enemy_beams::{BeamOwner, BeamRequest, EnemyBeams};
 use hud::HudInfo;
@@ -95,6 +97,7 @@ const ELITE_BAR_COLOR: Color = Color::new(255, 60, 50);
 const RESISTANT_BAR_COLOR: Color = Color::new(150, 160, 255);
 const ENEMY_BAR_BACKGROUND: Color = Color::new(70, 20, 20);
 const MAX_BEAM_IMPACT_EFFECTS: usize = 6;
+const BOSS_HEAL_REWARD: f32 = 20.0;
 const MAX_IMPACT_EFFECTS: usize = 8;
 const DEATH_DELAY: f32 = 2.5;
 const SUMMARY_AUTO_RETURN: f32 = 20.0;
@@ -261,6 +264,7 @@ pub struct Game {
     effects: Effects,
     run_stats: RunStats,
     enemy_beams: EnemyBeams,
+    boss_planets: BossPlanets,
     buffs: ActiveBuffs,
     reward_random: SeededRandom,
     pending_upgrades: u32,
@@ -436,6 +440,7 @@ impl Game {
             effects: Effects::new(),
             run_stats: RunStats::default(),
             enemy_beams: EnemyBeams::new(),
+            boss_planets: BossPlanets::default(),
             buffs: ActiveBuffs::new(),
             reward_random: SeededRandom::new(1),
             pending_upgrades: 0,
@@ -510,6 +515,7 @@ impl Game {
         self.effects.clear();
         self.run_stats = RunStats::default();
         self.enemy_beams.clear();
+        self.boss_planets.clear();
         self.buffs.reset();
         self.pending_upgrades = 0;
         self.roulette = None;
@@ -593,6 +599,8 @@ impl Game {
         self.system.update(delta_time);
         if self.program_mode == ProgramMode::Game {
             self.run_world.update(self.ship.position);
+            self.run_world
+                .scale_boss_health(self.progression.level(), self.session.elapsed());
         }
         self.refresh_colliders();
 
@@ -711,6 +719,17 @@ impl Game {
                 .weapons
                 .update(aim, &mut targets, modifiers, delta_time);
             self.handle_combat_events(events);
+            let active_planets: Vec<_> = self.run_world.planets().copied().collect();
+            self.boss_planets.update(
+                &active_planets,
+                self.ship.position,
+                self.progression.level(),
+                self.session.elapsed(),
+                delta_time,
+                &self.colliders,
+                &mut self.run_enemies,
+                &mut self.enemy_beams,
+            );
             let enemy_update = self.run_enemies.update(
                 self.ship.position,
                 self.ship.forward(),
@@ -913,6 +932,21 @@ impl Game {
         }
         let origin = self.ship.position;
         let forward = self.ship.forward();
+        if let Some((_, boss)) = self
+            .run_world
+            .planets()
+            .filter(|planet| planet.kind.is_boss())
+            .filter_map(|planet| {
+                let distance = (planet.position - origin).length();
+                (distance <= BOSS_ENGAGE_RANGE).then_some((distance, planet))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+        {
+            return Some((
+                format!("JEFE {}", planet_name(boss.kind)),
+                (boss.health / boss.max_health).clamp(0.0, 1.0),
+            ));
+        }
         let score = |position: Vec3| {
             let offset = position - origin;
             let distance = offset.length();
@@ -1187,6 +1221,7 @@ impl Game {
             self.effects.bomb_explosion(*center, *radius);
         }
         for planet in &events.planets_destroyed {
+            self.boss_planets.destroy(planet.id, &mut self.enemy_beams);
             self.effects
                 .planet_explosion(planet.position, planet.radius, planet.kind);
             self.run_stats.planets_destroyed += 1;
@@ -1195,8 +1230,31 @@ impl Game {
     }
 
     fn reward_planet(&mut self, planet: DestroyedPlanet) {
-        let reward = planet_reward(planet.kind, &self.weapons.inventory, &mut self.reward_random);
-        let message = self.apply_reward(reward);
+        let reward = planet_reward(
+            planet.kind,
+            &self.weapons.inventory,
+            &mut self.reward_random,
+        );
+        let mut message = self.apply_reward(reward);
+        if planet.kind.is_boss() {
+            let bonus = planet_reward(
+                planet.kind,
+                &self.weapons.inventory,
+                &mut self.reward_random,
+            );
+            let bonus_message = self.apply_reward(bonus);
+            let experience = if planet.kind == PlanetKind::Core {
+                150
+            } else {
+                100
+            };
+            self.grant_player_experience(experience);
+            self.progression.heal(BOSS_HEAL_REWARD);
+            message = format!(
+                "RECOMPENSA JEFE: {}, {}, +{} XP, +{:.0} HP",
+                message, bonus_message, experience, BOSS_HEAL_REWARD
+            );
+        }
         self.notify(format!(
             "PLANETA {} DESTRUIDO - {}",
             planet_name(planet.kind),

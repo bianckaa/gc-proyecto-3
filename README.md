@@ -104,7 +104,7 @@ Código: `src/game/enemies.rs` y `src/game/wave_director.rs`.
 
 ## Rayos verdes enemigos
 
-Sistema compartido en `src/game/enemy_beams.rs` para élites y, más adelante, para estructuras como Droid y Core. Cada rayo muestra primero una línea punteada parpadeante como aviso, después dispara en la dirección marcada y dura un instante. Dañan al jugador y a los demás enemigos, nunca a quien los disparó, chocan con obstáculos y empujan. Un tiempo mínimo entre rayos y un máximo de rayos activos evitan que el fuego sea imposible de esquivar. Para usarlo desde otro tipo de enemigo se llama `request` con `BeamOwner::Structure(id)` y, al morir, `cancel_owner` para detener sus disparos.
+Sistema compartido en `src/game/enemy_beams.rs` para élites, Droid y Core. Cada rayo muestra primero una línea punteada parpadeante como aviso, después dispara en la dirección marcada y dura un instante. Dañan al jugador y a los demás enemigos, nunca a quien los disparó, chocan con obstáculos y empujan. Un tiempo mínimo entre rayos y un máximo de rayos activos evitan que el fuego sea imposible de esquivar. Los rayos de una estructura se cancelan inmediatamente cuando esta es destruida.
 
 ## Planetas destructibles y recompensas
 
@@ -118,6 +118,8 @@ Los planetas de la partida tienen vida. Al apuntarlos aparece su barra de vida e
 | Droide | 70% de probabilidad de desbloquear un arma nueva; si no, mejora una existente |
 
 Nunca se entregan recompensas imposibles: si todas las armas están al máximo, se entrega experiencia.
+
+Durante la partida, Núcleo y Droide son planetas jefe de gran tamaño: Droide usa un radio procedural de 16 a 22 unidades y Núcleo de 20 a 26. Su vida escala según el nivel y el tiempo. Ambos disparan rayos verdes e invocan naves con un límite independiente: Droide ataca e invoca con mayor frecuencia y admite hasta 6 naves; Núcleo tiene más vida, genera grupos de 3 y admite hasta 12. Al entrar en su radio de combate, el HUD mantiene visible la vida del jefe sin exigir que esté bajo el crosshair. Al destruirlos restauran hasta 20 puntos de vida, dejan dos recompensas de su tipo y experiencia adicional, y cesan de inmediato sus disparos e invocaciones. Esta lógica vive en `src/game/boss_planets.rs` y no altera sus versiones del menú.
 
 ## Mejoras temporales
 

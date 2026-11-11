@@ -45,6 +45,10 @@ impl PlanetKind {
             Self::Droid => 3,
         }
     }
+
+    pub fn is_boss(self) -> bool {
+        matches!(self, Self::Core | Self::Droid)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -132,6 +136,22 @@ impl RunWorld {
             }
         }
         self.sectors.sort_by_key(|sector| sector.coord);
+    }
+
+    pub fn scale_boss_health(&mut self, level: u32, elapsed: f32) {
+        for planet in self
+            .sectors
+            .iter_mut()
+            .filter_map(|sector| sector.planet.as_mut())
+            .filter(|planet| planet.kind.is_boss())
+        {
+            let scaled = boss_health(planet.kind, level, elapsed);
+            if scaled > planet.max_health {
+                let ratio = planet.health / planet.max_health.max(f32::EPSILON);
+                planet.max_health = scaled;
+                planet.health = scaled * ratio;
+            }
+        }
     }
 
     pub fn planets(&self) -> impl Iterator<Item = &RunPlanet> {
@@ -240,8 +260,8 @@ fn generate_candidate(seed: u32, coord: SectorCoord) -> Option<PlanetCandidate> 
     let (minimum_radius, maximum_radius, base_health) = match kind {
         PlanetKind::Rocky => (2.5, 4.0, 40.0),
         PlanetKind::Gas => (4.0, 6.0, 70.0),
-        PlanetKind::Core => (3.0, 4.5, 100.0),
-        PlanetKind::Droid => (3.2, 5.0, 90.0),
+        PlanetKind::Core => (20.0, 26.0, boss_health(PlanetKind::Core, 1, 0.0)),
+        PlanetKind::Droid => (16.0, 22.0, boss_health(PlanetKind::Droid, 1, 0.0)),
     };
     let radius = random.range(minimum_radius, maximum_radius);
     let sector_origin = Vec3::new(
@@ -295,6 +315,17 @@ fn generate_candidate(seed: u32, coord: SectorCoord) -> Option<PlanetCandidate> 
         planet,
         priority: random.next().to_bits(),
     })
+}
+
+pub fn boss_health(kind: PlanetKind, level: u32, elapsed: f32) -> f32 {
+    let base = match kind {
+        PlanetKind::Core => 1_100.0,
+        PlanetKind::Droid => 750.0,
+        _ => return 0.0,
+    };
+    let level_scale = 1.0 + level.saturating_sub(1) as f32 * 0.16;
+    let time_scale = 1.0 + (elapsed.max(0.0) / 900.0).clamp(0.0, 1.0) * 1.25;
+    base * level_scale * time_scale
 }
 
 fn mix_sector_seed(seed: u32, coord: SectorCoord) -> u32 {
@@ -383,5 +414,12 @@ mod tests {
                 assert!((planet.position - other.position).length() >= MIN_PLANET_SPACING);
             }
         }
+    }
+
+    #[test]
+    fn bosses_are_larger_and_scale_health_with_progression() {
+        assert!(boss_health(PlanetKind::Core, 1, 0.0) > boss_health(PlanetKind::Droid, 1, 0.0));
+        assert!(boss_health(PlanetKind::Core, 5, 600.0) > boss_health(PlanetKind::Core, 1, 0.0));
+        assert_eq!(boss_health(PlanetKind::Rocky, 10, 900.0), 0.0);
     }
 }
