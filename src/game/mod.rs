@@ -1,6 +1,7 @@
 pub mod buffs;
 pub mod effects;
 pub mod enemies;
+pub mod enemy_beams;
 pub mod hud;
 pub mod player;
 pub mod progression;
