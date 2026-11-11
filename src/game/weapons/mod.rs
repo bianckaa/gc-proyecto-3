@@ -7,7 +7,7 @@ mod normal;
 
 use crate::engine::collision::Collider;
 use crate::engine::math::Vec3;
-use crate::game::enemies::{EnemySwarm, ENEMY_RADIUS};
+use crate::game::enemies::{EnemyKind, EnemySwarm};
 use crate::game::run_world::{DestroyedPlanet, RunWorld};
 use crate::renderer::Renderer;
 
@@ -196,7 +196,7 @@ pub struct Aim {
 pub struct CombatEvents {
     pub shots: Vec<WeaponKind>,
     pub impacts: Vec<Vec3>,
-    pub enemies_destroyed: Vec<Vec3>,
+    pub enemies_destroyed: Vec<(Vec3, EnemyKind)>,
     pub planets_destroyed: Vec<DestroyedPlanet>,
     pub explosions: Vec<(Vec3, f32)>,
     pub knockbacks: Vec<(Vec3, Vec3)>,
@@ -226,7 +226,7 @@ impl Targets<'_> {
             .enemies
             .enemies()
             .iter()
-            .map(|enemy| (TargetId::Enemy(enemy.id), enemy.position, ENEMY_RADIUS));
+            .map(|enemy| (TargetId::Enemy(enemy.id), enemy.position, enemy.radius()));
         let planets = self
             .planets
             .planets()
@@ -307,12 +307,11 @@ impl Targets<'_> {
                 if impulse.length() > 0.01 {
                     events.knockbacks.push((position.unwrap_or(impact), impulse));
                 }
-                if self
-                    .enemies
-                    .damage_with_knockback(id, damage, impulse)
-                    .destroyed
-                {
-                    events.enemies_destroyed.push(position.unwrap_or(impact));
+                let result = self.enemies.damage_with_knockback(id, damage, impulse);
+                if result.destroyed {
+                    events
+                        .enemies_destroyed
+                        .push((position.unwrap_or(impact), result.kind));
                 }
             }
             TargetId::Planet(id) => {

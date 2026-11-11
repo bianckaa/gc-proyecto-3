@@ -40,7 +40,8 @@ use upgrades::{apply_option, planet_reward, upgrade_options, Reward};
 use crate::platform::window::TextLabel;
 use crate::world::generation::SeededRandom;
 use crate::renderer::culling::Frustum;
-use enemies::{EnemySwarm, PlayerMotion, ENEMY_RENDER_SCALE};
+use enemies::{EnemyKind, EnemySwarm, PlayerMotion, ENEMY_RENDER_SCALE};
+use enemy_beams::{BeamOwner, BeamRequest, EnemyBeams};
 use hud::HudInfo;
 use player::{FlightMode, Ship, ShipControls, SHIP_RADIUS};
 use progression::PlayerProgression;
@@ -83,7 +84,13 @@ const TIME_SCALE_STEP: f32 = 0.25;
 const NOTICE_DURATION: f32 = 3.5;
 const WELCOME_DURATION: f32 = 7.0;
 const ORBIT_SEGMENTS: usize = 128;
-const ENEMY_EXPERIENCE: u32 = 8;
+const RESISTANT_COLOR: Vec3 = Vec3::new(0.32, 0.36, 0.62);
+const ELITE_COLOR: Vec3 = Vec3::new(0.95, 0.12, 0.10);
+const ELITE_GLOW: Vec3 = Vec3::new(0.18, 0.02, 0.0);
+const ELITE_BAR_COLOR: Color = Color::new(255, 60, 50);
+const RESISTANT_BAR_COLOR: Color = Color::new(150, 160, 255);
+const ENEMY_BAR_BACKGROUND: Color = Color::new(70, 20, 20);
+const MAX_BEAM_IMPACT_EFFECTS: usize = 6;
 const MAX_IMPACT_EFFECTS: usize = 8;
 const DEATH_DELAY: f32 = 2.5;
 const SUMMARY_AUTO_RETURN: f32 = 20.0;
@@ -249,6 +256,7 @@ pub struct Game {
     run_world: RunWorld,
     effects: Effects,
     run_stats: RunStats,
+    enemy_beams: EnemyBeams,
     buffs: ActiveBuffs,
     reward_random: SeededRandom,
     pending_upgrades: u32,
@@ -423,6 +431,7 @@ impl Game {
             run_world: RunWorld::new(),
             effects: Effects::new(),
             run_stats: RunStats::default(),
+            enemy_beams: EnemyBeams::new(),
             buffs: ActiveBuffs::new(),
             reward_random: SeededRandom::new(1),
             pending_upgrades: 0,
@@ -496,6 +505,7 @@ impl Game {
         self.progression.reset();
         self.effects.clear();
         self.run_stats = RunStats::default();
+        self.enemy_beams.clear();
         self.buffs.reset();
         self.pending_upgrades = 0;
         self.roulette = None;
@@ -646,6 +656,7 @@ impl Game {
                 velocity: self.ship.velocity,
                 forward: self.ship.forward(),
             };
+            self.run_enemies.set_run_elapsed(self.session.elapsed());
             let capacity = self.wave_director.settings(self.session.elapsed()).max_active;
             let recycled = self.run_enemies.recycle_stragglers(
                 motion,
@@ -663,12 +674,21 @@ impl Game {
                 delta_time,
             );
             for _ in 0..spawn_count {
-                let id = self.run_enemies.spawn_around(
+                let kind = self.wave_director.choose_kind(
+                    self.session.elapsed(),
+                    self.run_enemies.count_kind(EnemyKind::Elite),
+                    self.reward_random.next(),
+                );
+                let id = self.run_enemies.spawn_kind_around(
                     motion,
                     self.progression.level(),
+                    kind,
                     &self.colliders,
                     is_visible,
                 );
+                if kind == EnemyKind::Elite {
+                    self.notify("NAVE ELITE EN CAMINO");
+                }
                 if let Some(position) = self.run_enemies.position_of(id) {
                     self.effects.enemy_arrival(position);
                 }
@@ -696,6 +716,27 @@ impl Game {
                 self.ship.velocity = self.ship.velocity + enemy_update.player_knockback;
                 self.damage_player(enemy_update.contact_damage);
             }
+            let player_position = self.ship.position;
+            let beams = &mut self.enemy_beams;
+            let colliders = &self.colliders;
+            self.run_enemies
+                .elite_shots(player_position, delta_time, |id, origin| {
+                    beams.request(
+                        BeamRequest {
+                            owner: BeamOwner::Enemy(id),
+                            origin,
+                            target: player_position,
+                        },
+                        colliders,
+                    )
+                });
+            let beam_events = self.enemy_beams.update(
+                delta_time,
+                player_position,
+                SHIP_RADIUS,
+                &mut self.run_enemies,
+            );
+            self.handle_beam_events(beam_events);
         }
 
         match self.camera_mode {
@@ -1028,6 +1069,56 @@ impl Game {
             .collect()
     }
 
+    fn draw_enemy_bars(&self, renderer: &mut Renderer) {
+        let up = self.ship.up();
+        let right = self.ship.right();
+        for enemy in self.run_enemies.enemies() {
+            let color = match enemy.kind {
+                EnemyKind::Common => continue,
+                EnemyKind::Resistant => RESISTANT_BAR_COLOR,
+                EnemyKind::Elite => ELITE_BAR_COLOR,
+            };
+            if !enemy.is_materialized() {
+                continue;
+            }
+            let half = enemy.radius() * 1.1;
+            let center = enemy.position + up * (enemy.radius() * 1.5 + 0.4);
+            let start = center - right * half;
+            let end = center + right * half;
+            renderer.draw_line_3d(start, end, ENEMY_BAR_BACKGROUND, false);
+            let filled = start + (end - start) * enemy.health_ratio();
+            renderer.draw_line_3d(start, filled, color, false);
+            if enemy.kind == EnemyKind::Elite {
+                let lift = up * 0.12;
+                renderer.draw_line_3d(start + lift, filled + lift, color, false);
+            }
+        }
+    }
+
+    fn handle_beam_events(&mut self, events: enemy_beams::BeamEvents) {
+        if events.fired > 0 {
+            self.sounds.push(SoundEffect::Laser);
+        }
+        for impact in events.impacts.iter().take(MAX_BEAM_IMPACT_EFFECTS) {
+            self.effects.impact(*impact);
+        }
+        for (position, kind) in &events.enemies_destroyed {
+            self.enemy_explosion(*position, *kind);
+        }
+        if events.player_damage > 0.0 {
+            self.ship.velocity = self.ship.velocity + events.player_knockback;
+            self.damage_player(events.player_damage);
+        }
+    }
+
+    fn enemy_explosion(&mut self, position: Vec3, kind: EnemyKind) {
+        match kind {
+            EnemyKind::Common => self.effects.enemy_explosion(position),
+            EnemyKind::Resistant => self.effects.tough_enemy_explosion(position, false),
+            EnemyKind::Elite => self.effects.tough_enemy_explosion(position, true),
+        }
+    }
+
     fn handle_combat_events(&mut self, events: CombatEvents) {
         for kind in &events.shots {
             self.sounds.push(match kind {
@@ -1058,10 +1149,10 @@ impl Game {
         for (position, amount) in &events.damage {
             self.push_damage_number(*position, *amount);
         }
-        for position in &events.enemies_destroyed {
-            self.effects.enemy_explosion(*position);
+        for (position, kind) in &events.enemies_destroyed {
+            self.enemy_explosion(*position, *kind);
             self.run_stats.enemies_destroyed += 1;
-            self.grant_player_experience(ENEMY_EXPERIENCE);
+            self.grant_player_experience(kind.experience());
         }
         for (center, radius) in &events.explosions {
             self.effects.bomb_explosion(*center, *radius);
@@ -1606,6 +1697,15 @@ impl Game {
                 (self.ship.position - enemy.position).normalize()
             };
             let mut material = self.materials.enemy;
+            match enemy.kind {
+                EnemyKind::Common => {}
+                EnemyKind::Resistant => material.base_color = RESISTANT_COLOR,
+                EnemyKind::Elite => {
+                    material.base_color = ELITE_COLOR;
+                    material.emissive = ELITE_GLOW;
+                }
+            }
+            let size = ENEMY_RENDER_SCALE * enemy.kind.scale();
             material.opacity = enemy.arrival_progress();
             material.outline = material.outline && enemy.is_materialized();
             scene.push(Entity {
@@ -1616,8 +1716,8 @@ impl Game {
                         basis_rotation(forward, Vec3::new(0.0, 1.0, 0.0))
                             * Mat4::rotation_y(MODEL_FORWARD_CORRECTION),
                     )
-                    .with_uniform_scale(ENEMY_RENDER_SCALE * enemy.arrival_scale()),
-                radius: ENEMY_RENDER_SCALE,
+                    .with_uniform_scale(size * enemy.arrival_scale()),
+                radius: size,
             });
         }
 
@@ -1655,6 +1755,10 @@ impl Game {
             draw_planet_signature(renderer, planet, self.time);
         }
         self.effects.draw(renderer);
+        if self.program_mode == ProgramMode::Game {
+            self.enemy_beams.draw(renderer, self.time);
+            self.draw_enemy_bars(renderer);
+        }
         if self.program_mode == ProgramMode::Game && self.buffs.is_shielded() && self.ship_visible() {
             let pulse = 1.6 + (self.time * 5.0).sin() * 0.12;
             let center = self.ship.position;
@@ -2122,5 +2226,26 @@ mod tests {
 
         assert_eq!(game.progression.health(), 90.0);
         assert_eq!(game.session.state(), RunState::Playing);
+    }
+
+    #[test]
+    fn elite_beam_reaches_a_still_player_after_its_warning() {
+        let (mut game, mut camera) = test_game();
+        let input = InputState::new();
+        let mut effect = WarpEffect::new();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        game.ship.speed_multiplier = 0.0;
+        let elite_position = game.ship.position + game.ship.forward() * 40.0;
+        game.run_enemies
+            .spawn_kind_at(elite_position, game.progression.level(), EnemyKind::Elite);
+        let mut warned = false;
+        for _ in 0..(60 * 4) {
+            game.update(&input, 1.0 / 60.0, &mut camera, &mut effect);
+            warned |= game.enemy_beams.active_count() > 0;
+            game.ship.position = START_POSITION;
+            game.ship.velocity = Vec3::default();
+        }
+        assert!(warned);
+        assert!(game.progression.health() < game.progression.max_health());
     }
 }

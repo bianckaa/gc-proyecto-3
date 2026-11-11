@@ -16,6 +16,7 @@ const KNOCKBACK_COLOR: Color = Color::new(240, 240, 255);
 
 const IMPACT_COLOR: Color = Color::new(255, 220, 160);
 const ENEMY_COLORS: [Color; 2] = [Color::new(192, 80, 255), Color::new(255, 150, 60)];
+const ELITE_COLORS: [Color; 2] = [Color::new(255, 50, 40), Color::new(255, 200, 120)];
 const PLAYER_COLORS: [Color; 2] = [Color::new(92, 255, 92), Color::new(255, 255, 255)];
 
 struct Spark {
@@ -146,6 +147,16 @@ impl Effects {
             });
         }
         self.ring(position, 1.2 * strength, KNOCKBACK_COLOR, 0.2);
+    }
+
+    pub fn tough_enemy_explosion(&mut self, position: Vec3, elite: bool) {
+        let (colors, count, speed, ring) = if elite {
+            (ELITE_COLORS, 70, 20.0, 7.0)
+        } else {
+            (ENEMY_COLORS, 40, 16.0, 4.5)
+        };
+        self.burst(position, colors, count, speed, 0.9);
+        self.ring(position, ring, colors[0], 0.6);
     }
 
     pub fn enemy_explosion(&mut self, position: Vec3) {
