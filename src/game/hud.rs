@@ -116,10 +116,18 @@ fn draw_frame(renderer: &mut Renderer, x: i32, y: i32, width: i32, height: i32, 
     renderer.draw_line_2d(x + width, y, x + width, y + height, color);
 }
 
-pub fn draw_hud(renderer: &mut Renderer, info: &HudInfo) -> Vec<TextLabel> {
+pub fn draw_hud(
+    renderer: &mut Renderer,
+    info: &HudInfo,
+    crosshair_position: Option<(i32, i32)>,
+) -> Vec<TextLabel> {
     let mut labels = Vec::new();
     let bar_top = HEIGHT - BAR_HEIGHT;
-    renderer.draw_crosshair(WHITE);
+    if let Some((x, y)) = crosshair_position {
+        renderer.draw_crosshair_at(x, y, WHITE);
+    } else {
+        renderer.draw_crosshair(WHITE);
+    }
     renderer.draw_rect_2d(0, bar_top, WIDTH, BAR_HEIGHT, BLACK);
     renderer.draw_line_2d(0, bar_top - 1, WIDTH - 1, bar_top - 1, WHITE);
     if let Some(progress) = &info.progression {

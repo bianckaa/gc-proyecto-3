@@ -353,6 +353,10 @@ impl Renderer {
     pub fn draw_crosshair(&mut self, color: Color) {
         let center_x = self.framebuffer.width() as i32 / 2;
         let center_y = self.framebuffer.height() as i32 / 2;
+        self.draw_crosshair_at(center_x, center_y, color);
+    }
+
+    pub fn draw_crosshair_at(&mut self, center_x: i32, center_y: i32, color: Color) {
         let radius = CROSSHAIR_RADIUS;
         self.draw_line_2d(center_x - radius, center_y, center_x + radius, center_y, color);
         self.draw_line_2d(center_x, center_y - radius, center_x, center_y + radius, color);

@@ -70,6 +70,8 @@ const FOLLOW_HEIGHT_RATIO: f32 = 0.36;
 const FOLLOW_LOOK_AHEAD: f32 = 9.0;
 const FOLLOW_SMOOTHING: f32 = 6.0;
 const EVASIVE_LOOP_CAMERA_SMOOTHING: f32 = 1.5;
+const CROSSHAIR_PREVIEW_DISTANCE: f32 = 45.0;
+const CROSSHAIR_SCREEN_MARGIN: i32 = 6;
 const DEFAULT_FOLLOW_DISTANCE: f32 = 4.6;
 const MIN_FOLLOW_DISTANCE: f32 = 3.0;
 const MAX_FOLLOW_DISTANCE: f32 = 14.0;
@@ -829,6 +831,28 @@ impl Game {
     pub fn damage_flash(&self) -> (Color, f32) {
         let amount = self.damage_flash / DAMAGE_FLASH_DURATION * DAMAGE_FLASH_STRENGTH;
         (DAMAGE_COLOR, amount.clamp(0.0, 1.0))
+    }
+
+    pub fn crosshair_screen_position(&self, camera: &Camera) -> Option<(i32, i32)> {
+        if !self.ship_visible() {
+            return None;
+        }
+        let target = self.ship.position + self.ship.forward() * CROSSHAIR_PREVIEW_DISTANCE;
+        let clip = camera.view_projection_matrix() * target.extend(1.0);
+        if clip.w <= 0.001 {
+            return None;
+        }
+        let x = (clip.x / clip.w + 1.0) * 0.5 * FRAMEBUFFER_WIDTH as f32;
+        let y = (1.0 - clip.y / clip.w) * 0.5 * FRAMEBUFFER_HEIGHT as f32;
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        let max_x = FRAMEBUFFER_WIDTH as i32 - 1 - CROSSHAIR_SCREEN_MARGIN;
+        let max_y = FRAMEBUFFER_HEIGHT as i32 - 1 - CROSSHAIR_SCREEN_MARGIN;
+        Some((
+            (x.round() as i32).clamp(CROSSHAIR_SCREEN_MARGIN, max_x),
+            (y.round() as i32).clamp(CROSSHAIR_SCREEN_MARGIN, max_y),
+        ))
     }
 
     fn ship_visible(&self) -> bool {
@@ -1991,6 +2015,25 @@ mod tests {
         assert_eq!(flight_speed_multiplier(ProgramMode::Menu, 1.75), 1.0);
         assert_eq!(flight_speed_multiplier(ProgramMode::Game, 1.0), 1.5);
         assert_eq!(flight_speed_multiplier(ProgramMode::Game, 1.25), 1.875);
+    }
+
+    #[test]
+    fn crosshair_projects_a_point_ahead_of_the_ship_without_world_state() {
+        let (mut game, mut camera) = test_game();
+        let menu_position = game.crosshair_screen_position(&camera).unwrap();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+
+        let forward_position = game.crosshair_screen_position(&camera).unwrap();
+        game.ship.set_orientation(camera.right(), camera.up());
+        let turned_position = game.crosshair_screen_position(&camera).unwrap();
+
+        assert!(menu_position.0 >= CROSSHAIR_SCREEN_MARGIN);
+        assert!(menu_position.1 >= CROSSHAIR_SCREEN_MARGIN);
+        assert_ne!(forward_position, turned_position);
+        assert!(turned_position.0 >= CROSSHAIR_SCREEN_MARGIN);
+        assert!(turned_position.0 < FRAMEBUFFER_WIDTH as i32);
+        assert!(turned_position.1 >= CROSSHAIR_SCREEN_MARGIN);
+        assert!(turned_position.1 < FRAMEBUFFER_HEIGHT as i32);
     }
 
     fn test_game() -> (Game, Camera) {
