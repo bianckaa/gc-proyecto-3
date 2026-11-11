@@ -4,7 +4,6 @@ pub mod enemies;
 pub mod hud;
 pub mod player;
 pub mod progression;
-mod radar;
 pub mod roulette;
 pub mod run_world;
 pub mod session;
@@ -854,23 +853,6 @@ impl Game {
             (x.round() as i32).clamp(CROSSHAIR_SCREEN_MARGIN, max_x),
             (y.round() as i32).clamp(CROSSHAIR_SCREEN_MARGIN, max_y),
         ))
-    }
-
-    pub fn draw_enemy_radar(&self, renderer: &mut Renderer) {
-        if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing {
-            return;
-        }
-        radar::draw(
-            renderer,
-            self.ship.position,
-            self.ship.right(),
-            self.ship.up(),
-            self.ship.forward(),
-            self.run_enemies.enemies().iter().map(|enemy| radar::RadarContact {
-                position: enemy.position,
-                arriving: !enemy.is_materialized(),
-            }),
-        );
     }
 
     fn ship_visible(&self) -> bool {

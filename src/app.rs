@@ -146,7 +146,6 @@ impl App {
         let labels = if flash > 0.0 {
             Vec::new()
         } else {
-            self.game.draw_enemy_radar(&mut self.renderer);
             let crosshair = self.game.crosshair_screen_position(&camera);
             let mut labels = draw_hud(&mut self.renderer, &self.game.hud_info(), crosshair);
             labels.extend(self.game.damage_labels(&self.camera));
