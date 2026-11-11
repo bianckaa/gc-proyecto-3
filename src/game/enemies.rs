@@ -1,6 +1,7 @@
 use crate::engine::collision::{resolve_all, Collider};
 use crate::engine::math::Vec3;
 use crate::engine::transform::rotate_around;
+use crate::game::session::RUN_DURATION_SECONDS;
 use crate::world::generation::SeededRandom;
 
 pub const ENEMY_RADIUS: f32 = 1.25;
@@ -34,9 +35,71 @@ const SEPARATION_PASSES: usize = 2;
 const KNOCKBACK_DAMPING: f32 = 5.0;
 const TURN_RATE_RADIANS: f32 = 1.5;
 
+const ELITE_FIRE_RANGE: f32 = 95.0;
+const ELITE_FIRE_COOLDOWN: f32 = 5.0;
+const ELITE_FIRE_JITTER: f32 = 1.5;
+const ELITE_FIRE_RETRY: f32 = 0.4;
+const ELITE_FIRST_SHOT: f32 = 2.5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnemyKind {
+    #[default]
+    Common,
+    Resistant,
+    Elite,
+}
+
+impl EnemyKind {
+    pub fn health_multiplier(self) -> f32 {
+        match self {
+            EnemyKind::Common => 1.0,
+            EnemyKind::Resistant => 2.5,
+            EnemyKind::Elite => 8.0,
+        }
+    }
+
+    pub fn time_growth(self) -> f32 {
+        match self {
+            EnemyKind::Common => 0.0,
+            EnemyKind::Resistant => 1.0,
+            EnemyKind::Elite => 1.5,
+        }
+    }
+
+    pub fn scale(self) -> f32 {
+        match self {
+            EnemyKind::Common => 1.0,
+            EnemyKind::Resistant => 1.35,
+            EnemyKind::Elite => 1.875,
+        }
+    }
+
+    pub fn contact_damage(self) -> f32 {
+        match self {
+            EnemyKind::Common => CONTACT_DAMAGE,
+            EnemyKind::Resistant => CONTACT_DAMAGE * 1.5,
+            EnemyKind::Elite => CONTACT_DAMAGE * 2.5,
+        }
+    }
+
+    pub fn experience(self) -> u32 {
+        match self {
+            EnemyKind::Common => 8,
+            EnemyKind::Resistant => 18,
+            EnemyKind::Elite => 70,
+        }
+    }
+}
+
+pub fn health_for(kind: EnemyKind, level: u32, elapsed: f32) -> f32 {
+    let progress = (elapsed / RUN_DURATION_SECONDS).clamp(0.0, 1.0);
+    health_for_level(level) * kind.health_multiplier() * (1.0 + kind.time_growth() * progress)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunEnemy {
     pub id: u64,
+    pub kind: EnemyKind,
     pub position: Vec3,
     pub velocity: Vec3,
     pub health: f32,
@@ -46,13 +109,20 @@ pub struct RunEnemy {
     knockback_velocity: Vec3,
     arrival: f32,
     stray_time: f32,
+    fire_timer: f32,
+    elapsed: f32,
 }
 
 impl RunEnemy {
     fn new(id: u64, position: Vec3, level: u32) -> Self {
-        let max_health = health_for_level(level);
+        Self::of_kind(id, position, level, EnemyKind::Common, 0.0)
+    }
+
+    fn of_kind(id: u64, position: Vec3, level: u32, kind: EnemyKind, elapsed: f32) -> Self {
+        let max_health = health_for(kind, level, elapsed);
         Self {
             id,
+            kind,
             position,
             velocity: Vec3::default(),
             health: max_health,
@@ -62,14 +132,35 @@ impl RunEnemy {
             knockback_velocity: Vec3::default(),
             arrival: ARRIVAL_DURATION,
             stray_time: 0.0,
+            fire_timer: ELITE_FIRST_SHOT,
+            elapsed,
         }
     }
 
-    fn arriving(id: u64, position: Vec3, heading: Vec3, level: u32) -> Self {
+    fn arriving(
+        id: u64,
+        position: Vec3,
+        heading: Vec3,
+        level: u32,
+        kind: EnemyKind,
+        elapsed: f32,
+    ) -> Self {
         Self {
             heading: heading.normalize(),
             arrival: 0.0,
-            ..Self::new(id, position, level)
+            ..Self::of_kind(id, position, level, kind, elapsed)
+        }
+    }
+
+    pub fn radius(&self) -> f32 {
+        ENEMY_RADIUS * self.kind.scale()
+    }
+
+    pub fn health_ratio(&self) -> f32 {
+        if self.max_health > 0.0 {
+            (self.health / self.max_health).clamp(0.0, 1.0)
+        } else {
+            0.0
         }
     }
 
@@ -101,8 +192,8 @@ impl RunEnemy {
         self.stray_time > 0.0
     }
 
-    fn sync_level(&mut self, level: u32) {
-        if self.level == level {
+    fn sync(&mut self, level: u32, elapsed: f32) {
+        if self.level == level && (self.elapsed - elapsed).abs() < 1.0 {
             return;
         }
         let ratio = if self.max_health > 0.0 {
@@ -110,9 +201,10 @@ impl RunEnemy {
         } else {
             0.0
         };
-        self.max_health = health_for_level(level);
+        self.max_health = health_for(self.kind, level, elapsed);
         self.health = self.max_health * ratio;
         self.level = level;
+        self.elapsed = elapsed;
     }
 }
 
@@ -125,6 +217,7 @@ pub struct EnemyUpdate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EnemyDamage {
     pub destroyed: bool,
+    pub kind: EnemyKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,6 +232,7 @@ pub struct EnemySwarm {
     random: SeededRandom,
     contact_timer: f32,
     next_id: u64,
+    run_elapsed: f32,
 }
 
 impl EnemySwarm {
@@ -148,6 +242,7 @@ impl EnemySwarm {
             random: SeededRandom::new(1),
             contact_timer: 0.0,
             next_id: 1,
+            run_elapsed: 0.0,
         }
     }
 
@@ -156,6 +251,7 @@ impl EnemySwarm {
         self.random = SeededRandom::new(seed ^ 0xA511_E9B3);
         self.contact_timer = 0.0;
         self.next_id = 1;
+        self.run_elapsed = 0.0;
     }
 
     pub fn clear(&mut self) {
@@ -176,6 +272,81 @@ impl EnemySwarm {
             .iter()
             .filter(|enemy| !enemy.is_stray())
             .count()
+    }
+
+    pub fn set_run_elapsed(&mut self, elapsed: f32) {
+        if elapsed.is_finite() {
+            self.run_elapsed = elapsed.max(0.0);
+        }
+    }
+
+    pub fn count_kind(&self, kind: EnemyKind) -> usize {
+        self.enemies
+            .iter()
+            .filter(|enemy| enemy.kind == kind)
+            .count()
+    }
+
+    pub fn spawn_kind_at(&mut self, position: Vec3, player_level: u32, kind: EnemyKind) -> u64 {
+        let id = self.allocate_id();
+        self.enemies.push(RunEnemy::of_kind(
+            id,
+            position,
+            player_level,
+            kind,
+            self.run_elapsed,
+        ));
+        id
+    }
+
+    pub fn spawn_kind_around(
+        &mut self,
+        motion: PlayerMotion,
+        player_level: u32,
+        kind: EnemyKind,
+        obstacles: &[Collider],
+        is_visible: impl Fn(Vec3) -> bool,
+    ) -> u64 {
+        let position = self.arrival_point(motion, obstacles, &is_visible);
+        let id = self.allocate_id();
+        let heading = (motion.position - position).normalize();
+        self.enemies.push(RunEnemy::arriving(
+            id,
+            position,
+            heading,
+            player_level,
+            kind,
+            self.run_elapsed,
+        ));
+        id
+    }
+
+    pub fn elite_shots(
+        &mut self,
+        player_position: Vec3,
+        delta_time: f32,
+        mut try_fire: impl FnMut(u64, Vec3) -> bool,
+    ) {
+        if !delta_time.is_finite() || delta_time <= 0.0 {
+            return;
+        }
+        for enemy in &mut self.enemies {
+            if enemy.kind != EnemyKind::Elite || !enemy.is_materialized() {
+                continue;
+            }
+            if (enemy.position - player_position).length() > ELITE_FIRE_RANGE {
+                continue;
+            }
+            enemy.fire_timer -= delta_time;
+            if enemy.fire_timer > 0.0 {
+                continue;
+            }
+            enemy.fire_timer = if try_fire(enemy.id, enemy.position) {
+                ELITE_FIRE_COOLDOWN + self.random.range(0.0, ELITE_FIRE_JITTER)
+            } else {
+                ELITE_FIRE_RETRY
+            };
+        }
     }
 
     pub fn spawn_at(&mut self, position: Vec3, player_level: u32) -> u64 {
@@ -205,12 +376,13 @@ impl EnemySwarm {
         obstacles: &[Collider],
         is_visible: impl Fn(Vec3) -> bool,
     ) -> u64 {
-        let position = self.arrival_point(motion, obstacles, &is_visible);
-        let id = self.allocate_id();
-        let heading = (motion.position - position).normalize();
-        self.enemies
-            .push(RunEnemy::arriving(id, position, heading, player_level));
-        id
+        self.spawn_kind_around(
+            motion,
+            player_level,
+            EnemyKind::Common,
+            obstacles,
+            is_visible,
+        )
     }
 
     pub fn position_of(&self, id: u64) -> Option<Vec3> {
@@ -323,10 +495,11 @@ impl EnemySwarm {
                 self.enemies[index].knockback_velocity + impulse;
         }
         let destroyed = self.enemies[index].health <= 0.0;
+        let kind = self.enemies[index].kind;
         if destroyed {
             self.enemies.swap_remove(index);
         }
-        EnemyDamage { destroyed }
+        EnemyDamage { destroyed, kind }
     }
 
     pub fn update(
@@ -345,7 +518,7 @@ impl EnemySwarm {
         self.contact_timer = (self.contact_timer - delta_time).max(0.0);
 
         for enemy in &mut self.enemies {
-            enemy.sync_level(player_level);
+            enemy.sync(player_level, self.run_elapsed);
             enemy.arrival = (enemy.arrival + delta_time).min(ARRIVAL_DURATION);
             let to_player = player_position - enemy.position;
             let speed = pursuit_speed(to_player.length());
@@ -368,9 +541,9 @@ impl EnemySwarm {
             self.resolve_obstacles(obstacles);
         }
 
-        let minimum_contact_distance = ENEMY_RADIUS + player_radius;
         let can_hit = self.contact_timer <= 0.0;
         let mut touching = false;
+        let mut contact_damage: f32 = 0.0;
         let mut player_knockback = Vec3::default();
         if can_hit {
             for enemy in &mut self.enemies {
@@ -379,10 +552,11 @@ impl EnemySwarm {
                 }
                 let offset = player_position - enemy.position;
                 let distance = offset.length();
-                if distance > minimum_contact_distance {
+                if distance > enemy.radius() + player_radius {
                     continue;
                 }
                 touching = true;
+                contact_damage = contact_damage.max(enemy.kind.contact_damage());
                 let away_from_enemy = if distance > f32::EPSILON {
                     offset * (1.0 / distance)
                 } else {
@@ -399,7 +573,7 @@ impl EnemySwarm {
             self.contact_timer = CONTACT_COOLDOWN;
             let direction = player_knockback.normalize();
             EnemyUpdate {
-                contact_damage: CONTACT_DAMAGE,
+                contact_damage,
                 player_knockback: direction * PLAYER_CONTACT_KNOCKBACK,
             }
         } else {
@@ -408,12 +582,12 @@ impl EnemySwarm {
     }
 
     fn separate_enemies(&mut self) {
-        let minimum_distance = ENEMY_RADIUS * 2.0;
         for first in 0..self.enemies.len() {
             for second in (first + 1)..self.enemies.len() {
                 let (left, right) = self.enemies.split_at_mut(second);
                 let first_enemy = &mut left[first];
                 let second_enemy = &mut right[0];
+                let minimum_distance = first_enemy.radius() + second_enemy.radius();
                 let offset = second_enemy.position - first_enemy.position;
                 let distance = offset.length();
                 if distance >= minimum_distance {
@@ -432,11 +606,11 @@ impl EnemySwarm {
     }
 
     fn separate_from_player(&mut self, player_position: Vec3, player_radius: f32) {
-        let minimum_distance = ENEMY_RADIUS + player_radius;
         for enemy in &mut self.enemies {
             if !enemy.is_materialized() {
                 continue;
             }
+            let minimum_distance = enemy.radius() + player_radius;
             let offset = enemy.position - player_position;
             let distance = offset.length();
             if distance >= minimum_distance {
@@ -453,8 +627,13 @@ impl EnemySwarm {
 
     fn resolve_obstacles(&mut self, obstacles: &[Collider]) {
         for enemy in &mut self.enemies {
-            let (position, velocity, _) =
-                resolve_all(enemy.position, enemy.velocity, ENEMY_RADIUS, obstacles, 0.0);
+            let (position, velocity, _) = resolve_all(
+                enemy.position,
+                enemy.velocity,
+                enemy.radius(),
+                obstacles,
+                0.0,
+            );
             enemy.position = position;
             enemy.velocity = velocity;
         }
@@ -504,7 +683,8 @@ fn turn_toward(current: Vec3, target: Vec3, maximum_angle: f32) -> Vec3 {
 
 fn is_clear_of_obstacles(position: Vec3, obstacles: &[Collider]) -> bool {
     obstacles.iter().all(|obstacle| {
-        (position - obstacle.center).length() > obstacle.radius + ENEMY_RADIUS + SPAWN_CLEARANCE
+        (position - obstacle.center).length()
+            > obstacle.radius + ENEMY_RADIUS * EnemyKind::Elite.scale() + SPAWN_CLEARANCE
     })
 }
 
@@ -519,6 +699,81 @@ fn fallback_direction(first_id: u64, second_id: u64) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tougher_kinds_have_more_health_that_grows_with_time() {
+        let common = health_for(EnemyKind::Common, 5, 0.0);
+        let resistant = health_for(EnemyKind::Resistant, 5, 0.0);
+        let elite = health_for(EnemyKind::Elite, 5, 0.0);
+        assert!(common < resistant && resistant < elite);
+        assert_eq!(health_for(EnemyKind::Common, 5, 600.0), common);
+        assert!(health_for(EnemyKind::Elite, 5, 600.0) > elite);
+        assert!(EnemyKind::Common.scale() < EnemyKind::Resistant.scale());
+        assert_eq!(EnemyKind::Elite.scale(), 1.875);
+    }
+
+    #[test]
+    fn health_rescales_when_time_passes_and_keeps_the_ratio() {
+        let mut swarm = EnemySwarm::new();
+        let id = swarm.spawn_kind_at(Vec3::new(0.0, 0.0, -50.0), 1, EnemyKind::Resistant);
+        let before = swarm.enemies()[0].max_health;
+        swarm.damage(id, before * 0.5);
+        swarm.set_run_elapsed(600.0);
+        swarm.update(
+            Vec3::default(),
+            Vec3::new(0.0, 0.0, -1.0),
+            0.9,
+            1,
+            &[],
+            1.0 / 60.0,
+        );
+        let enemy = swarm.enemies()[0];
+        assert!(enemy.max_health > before);
+        assert!((enemy.health_ratio() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn elites_fire_in_range_and_retry_when_refused() {
+        let mut swarm = EnemySwarm::new();
+        swarm.spawn_kind_at(Vec3::new(0.0, 0.0, -30.0), 1, EnemyKind::Elite);
+        swarm.spawn_kind_at(Vec3::new(0.0, 0.0, -300.0), 1, EnemyKind::Elite);
+        swarm.spawn_at(Vec3::new(5.0, 0.0, -20.0), 1);
+        let mut attempts = 0;
+        for _ in 0..240 {
+            swarm.elite_shots(Vec3::default(), 1.0 / 60.0, |_, origin| {
+                assert!(origin.length() < ELITE_FIRE_RANGE);
+                attempts += 1;
+                false
+            });
+        }
+        assert!(attempts >= 2);
+        let mut accepted = 0;
+        for _ in 0..240 {
+            swarm.elite_shots(Vec3::default(), 1.0 / 60.0, |_, _| {
+                accepted += 1;
+                true
+            });
+        }
+        assert_eq!(accepted, 1);
+    }
+
+    #[test]
+    fn elite_contact_hurts_more_and_reports_its_kind_when_destroyed() {
+        let mut swarm = EnemySwarm::new();
+        let id = swarm.spawn_kind_at(Vec3::new(0.0, 0.0, -1.5), 1, EnemyKind::Elite);
+        let update = swarm.update(
+            Vec3::default(),
+            Vec3::new(0.0, 0.0, -1.0),
+            0.9,
+            1,
+            &[],
+            1.0 / 60.0,
+        );
+        assert_eq!(update.contact_damage, EnemyKind::Elite.contact_damage());
+        let result = swarm.damage(id, 1_000_000.0);
+        assert!(result.destroyed);
+        assert_eq!(result.kind, EnemyKind::Elite);
+    }
 
     #[test]
     fn health_scales_with_player_level_and_preserves_damage_ratio() {

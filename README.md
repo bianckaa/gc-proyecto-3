@@ -92,6 +92,20 @@ Todas las armas que se obtienen disparan solas al mismo tiempo. Cada una tiene n
 
 Las armas dañan enemigos y planetas. El Sol bloquea los disparos.
 
+## Enemigos
+
+| Tipo | Tamaño | Vida | Comportamiento |
+| --- | --- | --- | --- |
+| Común | 1× | Escala con el nivel del jugador | Persigue y daña por contacto |
+| Resistente | 1.35×, azul acero | 2.5× y crece con el tiempo | Aparece desde el segundo 45, cada vez con más frecuencia |
+| Élite | 1.875×, rojo | 8× y crece con el tiempo | Aparece desde el minuto 2, de forma controlada (de 1 a 3 activos), muestra barra de vida y dispara rayos verdes |
+
+Código: `src/game/enemies.rs` y `src/game/wave_director.rs`.
+
+## Rayos verdes enemigos
+
+Sistema compartido en `src/game/enemy_beams.rs` para élites y, más adelante, para estructuras como Droid y Core. Cada rayo muestra primero una línea punteada parpadeante como aviso, después dispara en la dirección marcada y dura un instante. Dañan al jugador y a los demás enemigos, nunca a quien los disparó, chocan con obstáculos y empujan. Un tiempo mínimo entre rayos y un máximo de rayos activos evitan que el fuego sea imposible de esquivar. Para usarlo desde otro tipo de enemigo se llama `request` con `BeamOwner::Structure(id)` y, al morir, `cancel_owner` para detener sus disparos.
+
 ## Planetas destructibles y recompensas
 
 Los planetas de la partida tienen vida. Al apuntarlos aparece su barra de vida en la parte superior. Al destruirlos explotan con colores de su tipo, no reaparecen y entregan una recompensa:
