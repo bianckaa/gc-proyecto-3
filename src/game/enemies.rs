@@ -1,5 +1,6 @@
 use crate::engine::collision::{resolve_all, Collider};
 use crate::engine::math::Vec3;
+use crate::engine::transform::rotate_around;
 use crate::world::generation::SeededRandom;
 
 pub const ENEMY_RADIUS: f32 = 1.25;
@@ -13,8 +14,9 @@ const MOVE_SPEED: f32 = 18.0;
 const CATCH_UP_SPEED: f32 = 60.0;
 const CATCH_UP_START: f32 = 50.0;
 const CATCH_UP_FULL: f32 = 180.0;
-const MIN_SPAWN_DISTANCE: f32 = 75.0;
-const MAX_SPAWN_DISTANCE: f32 = 90.0;
+const MIN_SPAWN_DISTANCE: f32 = 105.0;
+const MAX_SPAWN_DISTANCE: f32 = 135.0;
+const SPAWN_SAFE_RADIUS: f32 = 100.0;
 const SPAWN_JITTER: f32 = 0.65;
 const SPAWN_LOOKAHEAD: f32 = 2.5;
 const SPAWN_ATTEMPTS: usize = 8;
@@ -30,6 +32,7 @@ const PLAYER_CONTACT_KNOCKBACK: f32 = 10.0;
 const ENEMY_CONTACT_KNOCKBACK: f32 = 8.0;
 const SEPARATION_PASSES: usize = 2;
 const KNOCKBACK_DAMPING: f32 = 5.0;
+const TURN_RATE_RADIANS: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunEnemy {
@@ -39,6 +42,7 @@ pub struct RunEnemy {
     pub health: f32,
     pub max_health: f32,
     level: u32,
+    heading: Vec3,
     knockback_velocity: Vec3,
     arrival: f32,
     stray_time: f32,
@@ -54,14 +58,16 @@ impl RunEnemy {
             health: max_health,
             max_health,
             level,
+            heading: Vec3::default(),
             knockback_velocity: Vec3::default(),
             arrival: ARRIVAL_DURATION,
             stray_time: 0.0,
         }
     }
 
-    fn arriving(id: u64, position: Vec3, level: u32) -> Self {
+    fn arriving(id: u64, position: Vec3, heading: Vec3, level: u32) -> Self {
         Self {
+            heading: heading.normalize(),
             arrival: 0.0,
             ..Self::new(id, position, level)
         }
@@ -79,6 +85,16 @@ impl RunEnemy {
         let remaining = 1.0 - self.arrival_progress();
         let eased = 1.0 - remaining * remaining * remaining;
         ARRIVAL_START_SCALE + (1.0 - ARRIVAL_START_SCALE) * eased
+    }
+
+    pub fn forward(&self) -> Vec3 {
+        if self.heading.length() > f32::EPSILON {
+            self.heading
+        } else if self.velocity.length() > f32::EPSILON {
+            self.velocity.normalize()
+        } else {
+            Vec3::new(0.0, 0.0, -1.0)
+        }
     }
 
     fn is_stray(&self) -> bool {
@@ -191,8 +207,9 @@ impl EnemySwarm {
     ) -> u64 {
         let position = self.arrival_point(motion, obstacles, &is_visible);
         let id = self.allocate_id();
+        let heading = (motion.position - position).normalize();
         self.enemies
-            .push(RunEnemy::arriving(id, position, player_level));
+            .push(RunEnemy::arriving(id, position, heading, player_level));
         id
     }
 
@@ -238,6 +255,7 @@ impl EnemySwarm {
             let enemy = &mut self.enemies[index];
             enemy.position = position;
             enemy.velocity = Vec3::default();
+            enemy.heading = (motion.position - position).normalize();
             enemy.knockback_velocity = Vec3::default();
             enemy.arrival = 0.0;
             enemy.stray_time = 0.0;
@@ -263,7 +281,7 @@ impl EnemySwarm {
         let anchor = motion.position + motion.velocity * SPAWN_LOOKAHEAD;
         let behind = -motion.forward.normalize();
         let mut visible_fallback = None;
-        let mut last_candidate = anchor + behind * MAX_SPAWN_DISTANCE;
+        let mut last_candidate = motion.position + behind * MIN_SPAWN_DISTANCE;
         for attempt in 0..SPAWN_ATTEMPTS {
             let spread = SPAWN_JITTER + haste * 2.0 + attempt as f32 * SPAWN_SPREAD_STEP;
             let jitter = self.random.unit_direction() * spread;
@@ -273,6 +291,9 @@ impl EnemySwarm {
             }
             let distance = self.random.range(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
             let candidate = anchor + direction * distance;
+            if (candidate - motion.position).length() < SPAWN_SAFE_RADIUS {
+                continue;
+            }
             last_candidate = candidate;
             if !is_clear_of_obstacles(candidate, obstacles) {
                 continue;
@@ -328,7 +349,13 @@ impl EnemySwarm {
             enemy.arrival = (enemy.arrival + delta_time).min(ARRIVAL_DURATION);
             let to_player = player_position - enemy.position;
             let speed = pursuit_speed(to_player.length());
-            enemy.velocity = to_player.normalize() * speed + enemy.knockback_velocity;
+            let desired_heading = to_player.normalize();
+            enemy.heading = turn_toward(
+                enemy.heading,
+                desired_heading,
+                TURN_RATE_RADIANS * delta_time,
+            );
+            enemy.velocity = enemy.heading * speed + enemy.knockback_velocity;
             enemy.position = enemy.position + enemy.velocity * delta_time;
             enemy.knockback_velocity =
                 enemy.knockback_velocity * (-KNOCKBACK_DAMPING * delta_time).exp();
@@ -450,6 +477,31 @@ pub fn pursuit_speed(distance: f32) -> f32 {
     MOVE_SPEED + (CATCH_UP_SPEED - MOVE_SPEED) * eased
 }
 
+fn turn_toward(current: Vec3, target: Vec3, maximum_angle: f32) -> Vec3 {
+    if target.length() <= f32::EPSILON {
+        return current;
+    }
+    if current.length() <= f32::EPSILON {
+        return target.normalize();
+    }
+    let current = current.normalize();
+    let target = target.normalize();
+    let angle = current.dot(target).clamp(-1.0, 1.0).acos();
+    if angle <= maximum_angle || angle <= f32::EPSILON {
+        return target;
+    }
+    let mut axis = current.cross(target);
+    if axis.length() <= f32::EPSILON {
+        let reference = if current.y.abs() < 0.9 {
+            Vec3::new(0.0, 1.0, 0.0)
+        } else {
+            Vec3::new(1.0, 0.0, 0.0)
+        };
+        axis = current.cross(reference);
+    }
+    rotate_around(current, axis.normalize(), maximum_angle.min(angle)).normalize()
+}
+
 fn is_clear_of_obstacles(position: Vec3, obstacles: &[Collider]) -> bool {
     obstacles.iter().all(|obstacle| {
         (position - obstacle.center).length() > obstacle.radius + ENEMY_RADIUS + SPAWN_CLEARANCE
@@ -494,6 +546,19 @@ mod tests {
     }
 
     #[test]
+    fn procedural_spawns_respect_the_player_safe_radius() {
+        let mut swarm = EnemySwarm::new();
+        swarm.reset(11);
+        let motion = cruising(Vec3::new(40.0, -10.0, 25.0), 36.0);
+
+        for _ in 0..64 {
+            let id = swarm.spawn_around(motion, 1, &[], |_| false);
+            let position = swarm.position_of(id).unwrap();
+            assert!((position - motion.position).length() >= SPAWN_SAFE_RADIUS);
+        }
+    }
+
+    #[test]
     fn contact_damage_has_a_global_invulnerability_window() {
         let mut swarm = EnemySwarm::new();
         swarm.spawn_at(Vec3::default(), 1);
@@ -512,6 +577,8 @@ mod tests {
         assert_eq!(first.contact_damage, CONTACT_DAMAGE);
         assert!(first.player_knockback.length() > 0.0);
         assert_eq!(update(&mut swarm, 0.5).contact_damage, 0.0);
+        swarm.enemies[0].position = Vec3::default();
+        swarm.enemies[0].heading = Vec3::default();
         assert_eq!(update(&mut swarm, 0.25).contact_damage, CONTACT_DAMAGE);
     }
 
@@ -672,8 +739,7 @@ mod tests {
         let ghost = swarm.update(Vec3::default(), motion.forward, 0.9, 1, &[], 0.1);
         assert_eq!(ghost.contact_damage, 0.0);
 
-        swarm.enemies[0].position = Vec3::default();
-        let solid = swarm.update(
+        swarm.update(
             Vec3::default(),
             motion.forward,
             0.9,
@@ -683,6 +749,9 @@ mod tests {
         );
         assert!(swarm.enemies()[0].is_materialized());
         assert_eq!(swarm.enemies()[0].arrival_scale(), 1.0);
+        swarm.enemies[0].position = Vec3::default();
+        swarm.enemies[0].heading = Vec3::default();
+        let solid = swarm.update(Vec3::default(), motion.forward, 0.9, 1, &[], 0.01);
         assert_eq!(solid.contact_damage, CONTACT_DAMAGE);
     }
 
@@ -693,6 +762,25 @@ mod tests {
         assert_eq!(pursuit_speed(500.0), CATCH_UP_SPEED);
         assert!(MOVE_SPEED < FAST_SHIP_SPEED);
         assert!(CATCH_UP_SPEED > FAST_SHIP_SPEED);
+    }
+
+    #[test]
+    fn enemies_need_time_to_reverse_their_heading() {
+        let mut swarm = EnemySwarm::new();
+        swarm.spawn_at(Vec3::new(10.0, 0.0, 0.0), 1);
+        swarm.update(Vec3::default(), Vec3::new(0.0, 0.0, -1.0), 0.9, 1, &[], 0.1);
+        assert!(swarm.enemies()[0].forward().x < 0.0);
+
+        swarm.update(
+            Vec3::new(30.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            0.9,
+            1,
+            &[],
+            0.1,
+        );
+
+        assert!(swarm.enemies()[0].forward().x < 0.0);
     }
 
     #[test]
