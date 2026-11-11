@@ -169,7 +169,7 @@ impl SystemConfig {
                         Vec3::new(0.20, 0.46, 0.72),
                         Vec3::new(0.0, 0.015, 0.025),
                         ShaderKind::GasPlanet,
-                        false,
+                        true,
                     ),
                     radius: 4.6,
                     orbit_capture_radius: 4.6,
@@ -201,7 +201,12 @@ impl SystemConfig {
                 BodyConfig {
                     name: "LUNA",
                     model: BodyModel::Sphere,
-                    material: material(Vec3::new(0.25, 0.75, 1.0), none, ShaderKind::Toon, true),
+                    material: Material {
+                        // Comparte la cobertura screen-door del gaseoso sin
+                        // convertir el resto de materiales Toon en transparentes.
+                        opacity: 0.85,
+                        ..material(Vec3::new(0.25, 0.75, 1.0), none, ShaderKind::Toon, true)
+                    },
                     radius: 1.0,
                     orbit_capture_radius: 1.0,
                     collision_scale: 1.0,

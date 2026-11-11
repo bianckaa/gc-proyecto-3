@@ -96,4 +96,14 @@ mod tests {
             .count();
         assert_eq!(visible, 8);
     }
+
+    #[test]
+    fn gas_planet_coverage_uses_the_nearest_bayer_step_to_eighty_five_percent() {
+        let visible = (0..4)
+            .flat_map(|y| (0..4).map(move |x| (x, y)))
+            .filter(|&(x, y)| screen_door_visible(0.85, x, y))
+            .count();
+
+        assert_eq!(visible, 14);
+    }
 }

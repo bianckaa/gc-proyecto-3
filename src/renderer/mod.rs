@@ -24,10 +24,10 @@ use crate::debug::metrics::Metrics;
 use black_hole::BlackHoleEffect;
 use culling::Frustum;
 use depth::DepthBuffer;
-use dithering::{dither, dither_levels, screen_door_visible};
+use dithering::{dither, screen_door_visible};
 use framebuffer::{Color, Framebuffer};
 use heat_haze::HeatHaze;
-use lighting::{realistic_color, PointLight};
+use lighting::PointLight;
 use normal_map::NormalMap;
 use outline::{find_outline_pixels, ObjectBuffer, OutlinePixel};
 use rasterizer::FragmentOutput;
@@ -39,7 +39,6 @@ use warp_effect::WarpEffect;
 
 const DEFAULT_AMBIENT: f32 = 0.12;
 const CROSSHAIR_RADIUS: i32 = 4;
-const REALISTIC_DITHER_LEVELS: u32 = 6;
 const STAR_SEED: u32 = 20_260_001;
 const STAR_COUNT: usize = 1800;
 const NORMAL_MAP_SEED: u32 = 20_260_002;
@@ -47,7 +46,8 @@ const LOD_HIGH_DISTANCE: f32 = 12.0;
 const LOD_MEDIUM_DISTANCE: f32 = 40.0;
 const CRATER_RIM_END: f32 = 1.4;
 const CRATER_RIM_HEIGHT: f32 = 0.3;
-const GAS_PLANET_OPACITY: f32 = 0.76;
+// El patron Bayer de 4x4 convierte 0.85 en 14/16 pixeles visibles (87.5%).
+const GAS_PLANET_OPACITY: f32 = 0.85;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vertex {
@@ -192,7 +192,6 @@ impl Renderer {
         let view_projection = camera.view_projection_matrix();
         let light = self.light;
         let dithering_enabled = self.dithering_enabled;
-        let eye = camera.position;
         let normal_mapping_enabled = self.normal_mapping_enabled;
         let normal_map = Some(&self.normal_map);
 
@@ -244,30 +243,11 @@ impl Renderer {
                         time,
                         normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
-                    let realistic_normal = match material.shader {
-                        ShaderKind::RockyPlanet | ShaderKind::GasPlanet => {
-                            Some((fragment.world_position - center).normalize())
-                        }
-                        ShaderKind::CorePlanet | ShaderKind::DroidPlanet => Some(fragment.normal),
-                        _ => None,
-                    };
-                    let color = if let Some(normal) = realistic_normal {
-                        let realistic = realistic_color(
-                            surface.color,
-                            surface.intensity,
-                            normal,
-                            fragment.world_position,
-                            &light,
-                            eye,
-                        );
-                        if dithering_enabled {
-                            dither_levels(realistic, REALISTIC_DITHER_LEVELS, fragment.x, fragment.y)
-                        } else {
-                            Color::from_unit(realistic)
-                        }
-                    } else if material.shader == ShaderKind::GasPlanet {
-                        Color::from_unit(surface.color * (0.72 + surface.intensity * 0.28))
-                    } else if dithering_enabled {
+                    // Los planetas comparten el mismo corte de luz de la nave:
+                    // cada fragmento conserva su color o cae a negro segun el
+                    // patron ordenado. En sombra quedan apenas unos puntos, en
+                    // lugar del gradiente atmosferico de la ruta realista.
+                    let color = if dithering_enabled {
                         dither(surface, fragment.x, fragment.y)
                     } else {
                         Color::from_unit(surface.color * surface.intensity)

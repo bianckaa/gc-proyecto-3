@@ -35,6 +35,15 @@ fn standard_system_has_at_least_five_distinct_bodies() {
 }
 
 #[test]
+fn gas_moon_uses_eighty_five_percent_screen_door_coverage() {
+    let system = SolarSystem::new(SystemConfig::standard());
+    let moon = system.body(system.find("LUNA").unwrap());
+
+    assert!((moon.material.opacity - 0.85).abs() < f32::EPSILON);
+    assert!(moon.material.outline);
+}
+
+#[test]
 fn menu_system_makes_bodies_larger_and_orbits_more_spacious() {
     let standard = SystemConfig::standard();
     let menu = SystemConfig::menu();

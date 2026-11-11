@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 const FBM_OCTAVES: u32 = 4;
 const SUN_MAX_DITHER_INTENSITY: f32 = 0.86;
+const GAS_NIGHT_DITHER_INTENSITY: f32 = 0.28;
 const ROCKY_CRATER_COUNT: usize = 18;
 const GOLDEN_ANGLE: f32 = 2.399_963_1;
 static ROCKY_CRATERS: OnceLock<[(Vec3, f32); ROCKY_CRATER_COUNT]> = OnceLock::new();
@@ -237,7 +238,7 @@ fn shade_gas_planet(input: &ShadeInput) -> Surface {
         + storms * 0.06
         + spiral_arms * 0.16)
         * (1.0 - storm_eyes * 0.42))
-        .clamp(0.18, 0.86);
+        .clamp(GAS_NIGHT_DITHER_INTENSITY, 0.86);
     Surface { color, intensity }
 }
 

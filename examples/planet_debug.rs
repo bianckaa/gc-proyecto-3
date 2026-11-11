@@ -92,7 +92,7 @@ fn main() {
         base_color: Vec3::new(0.20, 0.46, 0.72),
         emissive: Vec3::new(0.0, 0.015, 0.025),
         shader: ShaderKind::GasPlanet,
-        outline: false,
+        outline: true,
         opacity: 1.0,
     };
     let droid_material = Material {
