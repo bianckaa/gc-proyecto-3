@@ -221,6 +221,18 @@ pub fn segment_sphere_hit(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> 
 }
 
 impl Targets<'_> {
+    pub fn nearest_enemy(&self, origin: Vec3) -> Option<Vec3> {
+        self.enemies
+            .enemies()
+            .iter()
+            .min_by(|a, b| {
+                (a.position - origin)
+                    .length()
+                    .total_cmp(&(b.position - origin).length())
+            })
+            .map(|enemy| enemy.position)
+    }
+
     fn spheres(&self) -> Vec<(TargetId, Vec3, f32)> {
         let enemies = self
             .enemies
@@ -286,6 +298,15 @@ impl Targets<'_> {
             .collect()
     }
 
+    pub fn enemies_within(&self, center: Vec3, radius: f32) -> Vec<(TargetId, Vec3)> {
+        self.enemies
+            .enemies()
+            .iter()
+            .filter(|enemy| (enemy.position - center).length() <= radius + enemy.radius())
+            .map(|enemy| (TargetId::Enemy(enemy.id), enemy.position))
+            .collect()
+    }
+
     pub fn hit(
         &mut self,
         target: TargetId,
@@ -305,7 +326,9 @@ impl Targets<'_> {
                     .find(|enemy| enemy.id == id)
                     .map(|enemy| enemy.position);
                 if impulse.length() > 0.01 {
-                    events.knockbacks.push((position.unwrap_or(impact), impulse));
+                    events
+                        .knockbacks
+                        .push((position.unwrap_or(impact), impulse));
                 }
                 let result = self.enemies.damage_with_knockback(id, damage, impulse);
                 if result.destroyed {
@@ -435,11 +458,14 @@ impl WeaponSystem {
             .update(normal, aim, targets, &mut events, delta_time);
         self.gatling
             .update(gatling, aim, targets, &mut events, delta_time);
-        self.laser.update(laser, aim, targets, &mut events, delta_time);
-        self.aura.update(aura, aim, targets, &mut events, delta_time);
+        self.laser
+            .update(laser, aim, targets, &mut events, delta_time);
+        self.aura
+            .update(aura, aim, targets, &mut events, delta_time);
         self.boomerang
             .update(boomerang, aim, targets, &mut events, delta_time);
-        self.bombs.update(bombs, aim, targets, &mut events, delta_time);
+        self.bombs
+            .update(bombs, aim, targets, &mut events, delta_time);
         events
     }
 
@@ -497,7 +523,12 @@ mod tests {
             planets: &mut world,
             obstacles: &[],
         };
-        weapons.update(aim_forward(), &mut targets, Modifiers::default(), delta_time)
+        weapons.update(
+            aim_forward(),
+            &mut targets,
+            Modifiers::default(),
+            delta_time,
+        )
     }
 
     #[test]
@@ -544,5 +575,24 @@ mod tests {
         };
         let hit = targets.first_along(Vec3::default(), Vec3::new(0.0, 0.0, -30.0), 0.1);
         assert!(matches!(hit, Some((_, None))));
+    }
+
+    #[test]
+    fn enemy_only_area_queries_ignore_planets() {
+        let mut enemies = EnemySwarm::new();
+        let enemy_id = enemies.spawn_at(Vec3::new(2.0, 0.0, 0.0), 1);
+        let mut world = RunWorld::new();
+        world.reset(7);
+        world.update(Vec3::default());
+        assert!(world.planets().next().is_some());
+        let targets = Targets {
+            enemies: &mut enemies,
+            planets: &mut world,
+            obstacles: &[],
+        };
+        assert_eq!(
+            targets.enemies_within(Vec3::default(), 10_000.0),
+            vec![(TargetId::Enemy(enemy_id), Vec3::new(2.0, 0.0, 0.0))]
+        );
     }
 }

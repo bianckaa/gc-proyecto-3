@@ -10,8 +10,8 @@ const DIM_COLOR: Color = Color::new(30, 110, 140);
 
 pub fn stats(step: f32) -> WeaponStats {
     WeaponStats {
-        damage: 5.0 + 2.5 * step,
-        cooldown: 0.5,
+        damage: 10.0 + 6.0 * step,
+        cooldown: 0.5 - 0.06 * step,
         size: 6.0 + 1.2 * step,
         knockback: 6.0,
         speed: 0.0,
@@ -45,7 +45,7 @@ impl Aura {
         }
         self.timer += stats.cooldown;
         let mut touched = false;
-        for (target, position) in targets.within(aim.origin, stats.size) {
+        for (target, position) in targets.enemies_within(aim.origin, stats.size) {
             let away = (position - aim.origin).normalize() * stats.knockback;
             targets.hit(target, stats.damage, away, position, events);
             touched = true;
@@ -60,7 +60,13 @@ impl Aura {
         let u_axis = aim.forward.normalize();
         let v_axis = aim.right.normalize();
         let outer = ring_points(aim.origin, u_axis, v_axis, radius * pulse, RING_SEGMENTS);
-        let inner = ring_points(aim.origin, u_axis, v_axis, radius * 0.7 * pulse, RING_SEGMENTS);
+        let inner = ring_points(
+            aim.origin,
+            u_axis,
+            v_axis,
+            radius * 0.7 * pulse,
+            RING_SEGMENTS,
+        );
         for segment in outer.windows(2).step_by(2) {
             renderer.draw_line_3d(segment[0], segment[1], COLOR, false);
         }
@@ -82,12 +88,29 @@ mod tests {
         let mut weapons = WeaponSystem::new();
         weapons.inventory.unlock(WeaponKind::Aura);
         let mut enemies = EnemySwarm::new();
-        enemies.spawn_at(Vec3::new(3.0, 0.0, 0.0), 1);
+        enemies.spawn_at(Vec3::new(0.0, 3.0, 0.0), 1);
         enemies.spawn_at(Vec3::new(40.0, 0.0, 0.0), 1);
         run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
-        let near = enemies.enemies().iter().find(|enemy| enemy.position.x < 10.0).unwrap();
-        let far = enemies.enemies().iter().find(|enemy| enemy.position.x > 10.0).unwrap();
+        let near = enemies
+            .enemies()
+            .iter()
+            .find(|enemy| enemy.position.y > 1.0)
+            .unwrap();
+        let far = enemies
+            .enemies()
+            .iter()
+            .find(|enemy| enemy.position.x > 10.0)
+            .unwrap();
         assert!(near.health < near.max_health);
         assert_eq!(far.health, far.max_health);
+    }
+
+    #[test]
+    fn damage_and_dps_increase_at_every_level() {
+        let levels: Vec<_> = (0..5).map(|step| super::stats(step as f32)).collect();
+        for pair in levels.windows(2) {
+            assert!(pair[1].damage > pair[0].damage);
+            assert!(pair[1].damage / pair[1].cooldown > pair[0].damage / pair[0].cooldown);
+        }
     }
 }

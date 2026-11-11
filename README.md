@@ -85,9 +85,9 @@ Todas las armas que se obtienen disparan solas al mismo tiempo. Cada una tiene n
 | --- | --- | --- |
 | Rayo | Arma inicial. Proyectiles rojos alternando entre las alas | `src/game/weapons/normal.rs` |
 | Gatling | Ráfagas rápidas de proyectiles amarillos con recarga interna | `src/game/weapons/gatling.rs` |
-| Láser | Haz rosa que atraviesa todos los objetivos en línea; recarga larga | `src/game/weapons/laser.rs` |
-| Aura | Anillo turquesa que daña y empuja periódicamente a todo lo cercano | `src/game/weapons/aura.rs` |
-| Bumerán | Sale hacia el frente, golpea al ir y al volver y regresa a la nave | `src/game/weapons/boomerang.rs` |
+| Láser | Haz rosa automático dirigido al enemigo más cercano; atraviesa todos los objetivos en línea y tiene recarga larga | `src/game/weapons/laser.rs` |
+| Aura | Anillo turquesa que daña y empuja periódicamente a los enemigos alrededor de toda la nave, sin afectar planetas; daño y DPS aumentan por nivel | `src/game/weapons/aura.rs` |
+| Bumerán | Se dirige automáticamente al enemigo más cercano, golpea al ir y al volver y regresa a la nave | `src/game/weapons/boomerang.rs` |
 | Bombas | Se lanzan periódicamente y explotan en área al chocar o al agotarse la mecha | `src/game/weapons/bombs.rs` |
 
 Las armas dañan enemigos y planetas. El Sol bloquea los disparos.

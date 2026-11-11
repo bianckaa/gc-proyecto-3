@@ -4,10 +4,13 @@ use crate::world::generation::SeededRandom;
 use std::collections::HashSet;
 
 pub const SECTOR_SIZE: f32 = 300.0;
+pub const RUN_START_POSITION: Vec3 = Vec3::new(0.0, 10.0, 104.0);
 const ACTIVE_RADIUS: i32 = 5;
 const PLANET_CHANCE: f32 = 0.30;
 const SECTOR_MARGIN: f32 = 40.0;
 const MIN_PLANET_SPACING: f32 = 200.0;
+const START_CLEARANCE: f32 = 25.0;
+const GAME_SUN_SAFETY_RADIUS: f32 = 87.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SectorCoord {
@@ -311,6 +314,11 @@ fn generate_candidate(seed: u32, coord: SectorCoord) -> Option<PlanetCandidate> 
         shape,
         tint,
     };
+    if (planet.position - RUN_START_POSITION).length() <= planet.radius + START_CLEARANCE
+        || planet.position.length() <= planet.radius + GAME_SUN_SAFETY_RADIUS
+    {
+        return None;
+    }
     Some(PlanetCandidate {
         planet,
         priority: random.next().to_bits(),

@@ -64,9 +64,14 @@ impl Boomerangs {
             if self.timer <= 0.0 && self.flying.is_empty() {
                 self.timer = stats.cooldown;
                 let count = stats.count.max(1);
+                let target_direction = targets
+                    .nearest_enemy(aim.origin)
+                    .map(|position| (position - aim.origin).normalize())
+                    .filter(|direction| direction.length() > f32::EPSILON)
+                    .unwrap_or_else(|| aim.forward.normalize());
                 for index in 0..count {
                     let offset = (index as f32 - (count - 1) as f32 * 0.5) * FAN_ANGLE;
-                    let direction = rotate_around(aim.forward.normalize(), aim.up.normalize(), offset);
+                    let direction = rotate_around(target_direction, aim.up.normalize(), offset);
                     self.flying.push(Boomerang {
                         position: aim.origin + direction * MUZZLE_DISTANCE,
                         direction,
@@ -98,13 +103,10 @@ impl Boomerangs {
             let start = boomerang.position;
             let end = start + velocity * delta_time;
             if !boomerang.returning
-                && targets
-                    .obstacles
-                    .iter()
-                    .any(|collider| {
-                        super::segment_sphere_hit(start, end, collider.center, collider.radius)
-                            .is_some()
-                    })
+                && targets.obstacles.iter().any(|collider| {
+                    super::segment_sphere_hit(start, end, collider.center, collider.radius)
+                        .is_some()
+                })
             {
                 boomerang.returning = true;
                 continue;
@@ -164,10 +166,31 @@ mod tests {
             thrown |= flying;
             caught |= thrown && !flying;
         }
-        let enemy = enemies.enemies().iter().find(|enemy| enemy.id == id).unwrap();
+        let enemy = enemies
+            .enemies()
+            .iter()
+            .find(|enemy| enemy.id == id)
+            .unwrap();
         let single_hit = WeaponKind::Boomerang.stats(1).damage;
         assert!(enemy.max_health - enemy.health >= single_hit * 2.0 - 0.01);
         assert!(caught);
         assert_eq!(aim_forward().origin, Vec3::default());
+    }
+
+    #[test]
+    fn launches_toward_the_nearest_enemy_outside_the_crosshair() {
+        let mut weapons = WeaponSystem::new();
+        weapons.inventory.unlock(WeaponKind::Boomerang);
+        let mut enemies = EnemySwarm::new();
+        let id = enemies.spawn_at(Vec3::new(12.0, 4.0, -12.0), 20);
+        for _ in 0..120 {
+            run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+        }
+        let enemy = enemies
+            .enemies()
+            .iter()
+            .find(|enemy| enemy.id == id)
+            .unwrap();
+        assert!(enemy.health < enemy.max_health);
     }
 }

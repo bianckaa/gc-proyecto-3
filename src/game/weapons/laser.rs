@@ -60,7 +60,11 @@ impl Laser {
             return;
         }
         self.timer = stats.cooldown;
-        let direction = aim.forward.normalize();
+        let direction = targets
+            .nearest_enemy(aim.origin)
+            .map(|position| (position - aim.origin).normalize())
+            .filter(|direction| direction.length() > f32::EPSILON)
+            .unwrap_or_else(|| aim.forward.normalize());
         let start = aim.origin + direction * MUZZLE_DISTANCE;
         let mut end = start + direction * stats.speed;
         let blocked = targets
@@ -74,7 +78,13 @@ impl Laser {
             end = start + (end - start) * time;
         }
         for (target, impact) in targets.all_along(start, end, stats.size) {
-            targets.hit(target, stats.damage, direction * stats.knockback, impact, events);
+            targets.hit(
+                target,
+                stats.damage,
+                direction * stats.knockback,
+                impact,
+                events,
+            );
         }
         self.beams.push(Beam {
             start,
@@ -119,5 +129,22 @@ mod tests {
                 .len();
         }
         assert_eq!(destroyed, 3);
+    }
+
+    #[test]
+    fn beam_automatically_aims_at_the_nearest_enemy() {
+        let mut weapons = WeaponSystem::new();
+        weapons.inventory.unlock(WeaponKind::Laser);
+        let mut enemies = EnemySwarm::new();
+        let id = enemies.spawn_at(Vec3::new(18.0, 9.0, -25.0), 20);
+        for _ in 0..100 {
+            run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+        }
+        let enemy = enemies
+            .enemies()
+            .iter()
+            .find(|enemy| enemy.id == id)
+            .unwrap();
+        assert!(enemy.health < enemy.max_health);
     }
 }
