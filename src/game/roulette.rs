@@ -1,5 +1,5 @@
 use crate::game::upgrades::{describe, UpgradeOption};
-use crate::game::weapons::{Inventory, WeaponKind};
+use crate::game::weapons::{Inventory, WeaponKind, MAX_WEAPON_LEVEL};
 use crate::platform::window::TextLabel;
 use crate::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
 use crate::renderer::Renderer;
@@ -17,6 +17,8 @@ const FOOTER_HEIGHT: i32 = 16;
 
 const FRAME: Color = Color::new(150, 150, 160);
 const HIGHLIGHT: Color = Color::new(255, 220, 120);
+const GOLD: Color = Color::new(255, 164, 48);
+const GOLD_TEXT: Color = Color::new(255, 205, 112);
 const TITLE: Color = Color::new(170, 92, 255);
 const TEXT: Color = Color::new(214, 214, 214);
 const SPINNING: Color = Color::new(120, 120, 130);
@@ -34,6 +36,14 @@ fn frame(renderer: &mut Renderer, x: i32, y: i32, width: i32, height: i32, color
     renderer.draw_line_2d(x, y + height, x + width, y + height, color);
     renderer.draw_line_2d(x, y, x, y + height, color);
     renderer.draw_line_2d(x + width, y, x + width, y + height, color);
+}
+
+fn is_golden(option: UpgradeOption, inventory: &Inventory) -> bool {
+    matches!(
+        option,
+        UpgradeOption::Improve(kind)
+            if inventory.level(kind) == MAX_WEAPON_LEVEL.saturating_sub(1)
+    )
 }
 
 impl Roulette {
@@ -119,10 +129,31 @@ impl Roulette {
             let card_center = card_left as f32 + CARD_WIDTH as f32 * 0.5;
             let is_revealed = index < revealed;
             let is_selected = is_revealed && self.is_ready() && index == self.selected;
-            let color = if is_selected { HIGHLIGHT } else { FRAME };
-            frame(renderer, card_left, card_top, CARD_WIDTH, CARD_HEIGHT, color);
+            let golden = is_revealed && is_golden(*option, inventory);
+            let color = if golden {
+                GOLD
+            } else if is_selected {
+                HIGHLIGHT
+            } else {
+                FRAME
+            };
+            frame(
+                renderer,
+                card_left,
+                card_top,
+                CARD_WIDTH,
+                CARD_HEIGHT,
+                color,
+            );
             if is_selected {
-                frame(renderer, card_left + 2, card_top + 2, CARD_WIDTH - 4, CARD_HEIGHT - 4, color);
+                frame(
+                    renderer,
+                    card_left + 2,
+                    card_top + 2,
+                    CARD_WIDTH - 4,
+                    CARD_HEIGHT - 4,
+                    color,
+                );
             }
             labels.push(
                 TextLabel::new(
@@ -151,8 +182,14 @@ impl Roulette {
             }
             let (title, lines) = describe(*option, inventory);
             labels.push(
-                TextLabel::new(title, card_center, card_top as f32 + 12.0, TEXT_SIZE, HIGHLIGHT)
-                    .centered(),
+                TextLabel::new(
+                    title,
+                    card_center,
+                    card_top as f32 + 12.0,
+                    TEXT_SIZE,
+                    if golden { GOLD } else { HIGHLIGHT },
+                )
+                .centered(),
             );
             for (row, line) in lines.into_iter().enumerate() {
                 labels.push(
@@ -161,7 +198,7 @@ impl Roulette {
                         card_center,
                         card_top as f32 + 28.0 + row as f32 * LINE,
                         TEXT_SIZE,
-                        TEXT,
+                        if golden { GOLD_TEXT } else { TEXT },
                     )
                     .centered(),
                 );
@@ -210,7 +247,10 @@ mod tests {
         assert!(!wheel.is_ready());
         wheel.update(REVEAL_STEP * 3.0);
         assert!(wheel.is_ready());
-        assert_eq!(wheel.confirm(), Some(UpgradeOption::Improve(WeaponKind::Normal)));
+        assert_eq!(
+            wheel.confirm(),
+            Some(UpgradeOption::Improve(WeaponKind::Normal))
+        );
     }
 
     #[test]
@@ -221,7 +261,28 @@ mod tests {
         assert_eq!(wheel.selected(), 2);
         wheel.move_selection(1);
         assert_eq!(wheel.selected(), 0);
-        assert_eq!(wheel.choose(1), Some(UpgradeOption::Unlock(WeaponKind::Laser)));
+        assert_eq!(
+            wheel.choose(1),
+            Some(UpgradeOption::Unlock(WeaponKind::Laser))
+        );
         assert_eq!(wheel.choose(7), None);
+    }
+
+    #[test]
+    fn only_the_upgrade_that_reaches_level_ten_is_golden() {
+        let mut inventory = Inventory::new();
+        while inventory.level(WeaponKind::Normal) < MAX_WEAPON_LEVEL - 1 {
+            inventory.upgrade(WeaponKind::Normal);
+        }
+        assert!(is_golden(
+            UpgradeOption::Improve(WeaponKind::Normal),
+            &inventory
+        ));
+        assert!(!is_golden(UpgradeOption::MaxHealth, &inventory));
+        inventory.upgrade(WeaponKind::Normal);
+        assert!(!is_golden(
+            UpgradeOption::Improve(WeaponKind::Normal),
+            &inventory
+        ));
     }
 }

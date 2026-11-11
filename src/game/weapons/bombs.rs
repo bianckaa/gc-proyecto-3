@@ -7,19 +7,29 @@ const FUSE: f32 = 1.6;
 const DRAG: f32 = 1.2;
 const CONTACT_RADIUS: f32 = 0.5;
 const DROP_HEIGHT: f32 = -0.4;
+const BOMB_SPACING: f32 = 0.9;
 const BOMB_SIZE: f32 = 0.45;
 const BLINK_RATE: f32 = 6.0;
 const COLOR: Color = Color::new(255, 140, 40);
 const WARNING: Color = Color::new(255, 240, 200);
 
 pub fn stats(step: f32) -> WeaponStats {
+    let early = step.min(4.0);
+    let evolved = (step - 4.0).max(0.0);
     WeaponStats {
-        damage: 35.0 + 12.0 * step,
-        cooldown: 3.2 - 0.3 * step,
+        level: 1,
+        damage: 35.0 + 12.0 * early + 5.0 * evolved,
+        cooldown: (3.2 - 0.3 * step).max(1.4),
         size: 7.0 + 1.5 * step,
         knockback: 20.0,
         speed: 18.0,
-        count: 1,
+        count: if step >= 9.0 {
+            3
+        } else if step >= 4.0 {
+            2
+        } else {
+            1
+        },
     }
 }
 
@@ -57,13 +67,18 @@ impl Bombs {
         self.timer -= delta_time;
         if self.timer <= 0.0 {
             self.timer = stats.cooldown;
-            self.armed.push(Bomb {
-                position: aim.origin
-                    + aim.forward.normalize() * MUZZLE_DISTANCE
-                    + aim.up.normalize() * DROP_HEIGHT,
-                velocity: aim.forward.normalize() * stats.speed,
-                fuse: FUSE,
-            });
+            let count = stats.count.max(1);
+            for index in 0..count {
+                let offset = (index as f32 - (count - 1) as f32 * 0.5) * BOMB_SPACING;
+                self.armed.push(Bomb {
+                    position: aim.origin
+                        + aim.forward.normalize() * MUZZLE_DISTANCE
+                        + aim.up.normalize() * DROP_HEIGHT
+                        + aim.right.normalize() * offset,
+                    velocity: aim.forward.normalize() * stats.speed,
+                    fuse: FUSE,
+                });
+            }
             events.shots.push(WeaponKind::Bombs);
         }
         let mut detonations = Vec::new();
@@ -141,5 +156,21 @@ mod tests {
             .enemies()
             .iter()
             .all(|enemy| enemy.health < enemy.max_health));
+    }
+
+    #[test]
+    fn evolved_levels_drop_two_then_three_bombs() {
+        for (level, expected) in [(5, 2), (10, 3)] {
+            let mut weapons = WeaponSystem::new();
+            weapons.inventory.unlock(WeaponKind::Bombs);
+            while weapons.inventory.level(WeaponKind::Bombs) < level {
+                weapons.inventory.upgrade(WeaponKind::Bombs);
+            }
+            let mut enemies = EnemySwarm::new();
+            for _ in 0..61 {
+                run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+            }
+            assert_eq!(weapons.bombs.armed.len(), expected);
+        }
     }
 }

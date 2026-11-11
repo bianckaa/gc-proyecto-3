@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeaponStats {
+    pub level: u8,
     pub damage: f32,
     pub cooldown: f32,
     pub size: f32,
@@ -11,6 +12,7 @@ pub struct WeaponStats {
 impl WeaponStats {
     pub fn modified(self, modifiers: Modifiers) -> Self {
         Self {
+            level: self.level,
             damage: self.damage * modifiers.damage,
             cooldown: self.cooldown / modifiers.fire_rate.max(0.1),
             speed: self.speed * modifiers.projectile_speed,

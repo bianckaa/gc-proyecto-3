@@ -61,6 +61,20 @@ fn higher_levels_and_modifiers_strengthen_every_weapon() {
 }
 
 #[test]
+fn evolution_milestones_change_weapon_counts_and_knockback() {
+    assert_eq!(WeaponKind::Normal.stats(4).count, 1);
+    assert_eq!(WeaponKind::Normal.stats(5).count, 2);
+    assert_eq!(WeaponKind::Laser.stats(4).count, 1);
+    assert_eq!(WeaponKind::Laser.stats(5).count, 2);
+    assert_eq!(WeaponKind::Laser.stats(10).count, 4);
+    assert_eq!(WeaponKind::Bombs.stats(4).count, 1);
+    assert_eq!(WeaponKind::Bombs.stats(5).count, 2);
+    assert_eq!(WeaponKind::Bombs.stats(10).count, 3);
+    assert_eq!(WeaponKind::Gatling.stats(10).count, 0);
+    assert!(WeaponKind::Aura.stats(10).knockback > WeaponKind::Aura.stats(9).knockback);
+}
+
+#[test]
 fn obstacle_blocks_a_target_behind_it() {
     let mut enemies = EnemySwarm::new();
     enemies.spawn_at(Vec3::new(0.0, 0.0, -20.0), 1);

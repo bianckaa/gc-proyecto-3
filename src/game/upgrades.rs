@@ -35,6 +35,22 @@ fn pick<T: Copy>(items: &[T], random: &mut SeededRandom) -> Option<T> {
     Some(items[index])
 }
 
+fn evolution_text(kind: WeaponKind, level: u8) -> Option<&'static str> {
+    match (kind, level) {
+        (WeaponKind::Normal, 5) => Some("DOBLE DISPARO"),
+        (WeaponKind::Laser, 5) => Some("2 LASERES"),
+        (WeaponKind::Boomerang, 5) => Some("DOBLE RECORRIDO"),
+        (WeaponKind::Bombs, 5) => Some("2 BOMBAS"),
+        (WeaponKind::Normal, 10) => Some("DOBLE RAYO POTENCIADO"),
+        (WeaponKind::Gatling, 10) => Some("FUEGO CONTINUO"),
+        (WeaponKind::Laser, 10) => Some("4 LASERES"),
+        (WeaponKind::Aura, 10) => Some("EMPUJE MAXIMO"),
+        (WeaponKind::Boomerang, 10) => Some("ORBITA PERMANENTE"),
+        (WeaponKind::Bombs, 10) => Some("3 BOMBAS"),
+        _ => None,
+    }
+}
+
 pub fn planet_reward(kind: PlanetKind, inventory: &Inventory, random: &mut SeededRandom) -> Reward {
     let locked: Vec<_> = inventory.locked().collect();
     let upgradable: Vec<_> = inventory.upgradable().collect();
@@ -64,20 +80,28 @@ pub fn upgrade_options(
     random: &mut SeededRandom,
     count: usize,
 ) -> Vec<UpgradeOption> {
+    if count == 0 {
+        return Vec::new();
+    }
     let mut pool: Vec<UpgradeOption> = inventory
         .locked()
         .map(UpgradeOption::Unlock)
         .chain(inventory.upgradable().map(UpgradeOption::Improve))
         .collect();
     let mut options = Vec::with_capacity(count);
-    while options.len() < count && !pool.is_empty() {
+    while options.len() + 1 < count && !pool.is_empty() {
         let index = ((random.next() * pool.len() as f32) as usize).min(pool.len() - 1);
         options.push(pool.swap_remove(index));
     }
-    for filler in [UpgradeOption::MaxHealth, UpgradeOption::Repair, UpgradeOption::Shield] {
+    options.push(UpgradeOption::MaxHealth);
+    for filler in [UpgradeOption::Repair, UpgradeOption::Shield] {
         if options.len() < count {
             options.push(filler);
         }
+    }
+    for index in (1..options.len()).rev() {
+        let swap = ((random.next() * (index + 1) as f32) as usize).min(index);
+        options.swap(index, swap);
     }
     options
 }
@@ -99,14 +123,15 @@ pub fn describe(option: UpgradeOption, inventory: &Inventory) -> (String, Vec<St
             let level = inventory.level(kind);
             let now = kind.stats(level);
             let next = kind.stats(level + 1);
-            (
-                kind.name().to_owned(),
-                vec![
-                    format!("NIVEL {} > {}", level, level + 1),
-                    format!("DANO {:.0} > {:.0}", now.damage, next.damage),
-                    format!("RECARGA {:.2} > {:.2}", now.cooldown, next.cooldown),
-                ],
-            )
+            let mut lines = vec![
+                format!("NIVEL {} > {}", level, level + 1),
+                format!("DANO {:.0} > {:.0}", now.damage, next.damage),
+                format!("RECARGA {:.2} > {:.2}", now.cooldown, next.cooldown),
+            ];
+            if let Some(evolution) = evolution_text(kind, level.saturating_add(1)) {
+                lines.push(evolution.to_owned());
+            }
+            (kind.name().to_owned(), lines)
         }
         UpgradeOption::MaxHealth => (
             "BLINDAJE".to_owned(),
@@ -136,7 +161,9 @@ pub fn apply_option(
         UpgradeOption::Improve(kind) => {
             inventory.upgrade(kind);
         }
-        UpgradeOption::MaxHealth => progression.increase_max_health(MAX_HEALTH_BONUS, MAX_HEALTH_BONUS),
+        UpgradeOption::MaxHealth => {
+            progression.increase_max_health(MAX_HEALTH_BONUS, MAX_HEALTH_BONUS)
+        }
         UpgradeOption::Repair => progression.heal(REPAIR_AMOUNT),
         UpgradeOption::Shield => buffs.grant(BuffKind::Shield),
     }
@@ -211,9 +238,10 @@ mod tests {
         }
         let options = upgrade_options(&inventory, &mut random, 3);
         assert_eq!(options.len(), 3);
-        assert!(options
-            .iter()
-            .all(|option| matches!(option, UpgradeOption::MaxHealth | UpgradeOption::Repair | UpgradeOption::Shield)));
+        assert!(options.iter().all(|option| matches!(
+            option,
+            UpgradeOption::MaxHealth | UpgradeOption::Repair | UpgradeOption::Shield
+        )));
         assert!(WeaponKind::ALL
             .iter()
             .all(|kind| inventory.level(*kind) == MAX_WEAPON_LEVEL));
@@ -228,9 +256,39 @@ mod tests {
         let options = upgrade_options(&inventory, &mut random, 3);
         assert_eq!(options.len(), 3);
         assert!(options[0] != options[1] && options[1] != options[2] && options[0] != options[2]);
-        apply_option(UpgradeOption::Improve(WeaponKind::Normal), &mut inventory, &mut progression, &mut buffs);
+        apply_option(
+            UpgradeOption::Improve(WeaponKind::Normal),
+            &mut inventory,
+            &mut progression,
+            &mut buffs,
+        );
         assert_eq!(inventory.level(WeaponKind::Normal), 2);
-        apply_option(UpgradeOption::MaxHealth, &mut inventory, &mut progression, &mut buffs);
+        apply_option(
+            UpgradeOption::MaxHealth,
+            &mut inventory,
+            &mut progression,
+            &mut buffs,
+        );
         assert!(progression.max_health() > 100.0);
+    }
+
+    #[test]
+    fn max_health_is_always_one_of_the_level_up_options() {
+        let inventory = Inventory::new();
+        for seed in 0..100 {
+            let mut random = SeededRandom::new(seed);
+            let options = upgrade_options(&inventory, &mut random, 3);
+            assert!(options.contains(&UpgradeOption::MaxHealth));
+        }
+    }
+
+    #[test]
+    fn milestone_descriptions_explain_the_weapon_evolution() {
+        let mut inventory = Inventory::new();
+        while inventory.level(WeaponKind::Normal) < 9 {
+            inventory.upgrade(WeaponKind::Normal);
+        }
+        let (_, lines) = describe(UpgradeOption::Improve(WeaponKind::Normal), &inventory);
+        assert!(lines.iter().any(|line| line == "DOBLE RAYO POTENCIADO"));
     }
 }

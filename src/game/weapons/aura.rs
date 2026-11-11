@@ -10,10 +10,11 @@ const DIM_COLOR: Color = Color::new(30, 110, 140);
 
 pub fn stats(step: f32) -> WeaponStats {
     WeaponStats {
+        level: 1,
         damage: 10.0 + 6.0 * step,
-        cooldown: 0.5 - 0.06 * step,
+        cooldown: (0.5 - 0.06 * step).max(0.18),
         size: 6.0 + 1.2 * step,
-        knockback: 6.0,
+        knockback: if step >= 9.0 { 36.0 } else { 6.0 + 1.5 * step },
         speed: 0.0,
         count: 1,
     }
@@ -107,10 +108,11 @@ mod tests {
 
     #[test]
     fn damage_and_dps_increase_at_every_level() {
-        let levels: Vec<_> = (0..5).map(|step| super::stats(step as f32)).collect();
+        let levels: Vec<_> = (0..10).map(|step| super::stats(step as f32)).collect();
         for pair in levels.windows(2) {
             assert!(pair[1].damage > pair[0].damage);
             assert!(pair[1].damage / pair[1].cooldown > pair[0].damage / pair[0].cooldown);
         }
+        assert!(levels[9].knockback >= levels[8].knockback * 1.5);
     }
 }

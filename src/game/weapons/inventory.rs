@@ -43,15 +43,18 @@ impl WeaponKind {
     }
 
     pub fn stats(self, level: u8) -> WeaponStats {
-        let step = level.clamp(1, MAX_WEAPON_LEVEL) as f32 - 1.0;
-        match self {
+        let level = level.clamp(1, MAX_WEAPON_LEVEL);
+        let step = level as f32 - 1.0;
+        let mut stats = match self {
             WeaponKind::Normal => normal::stats(step),
             WeaponKind::Gatling => gatling::stats(step),
             WeaponKind::Laser => laser::stats(step),
             WeaponKind::Aura => aura::stats(step),
             WeaponKind::Boomerang => boomerang::stats(step),
             WeaponKind::Bombs => bombs::stats(step),
-        }
+        };
+        stats.level = level;
+        stats
     }
 }
 

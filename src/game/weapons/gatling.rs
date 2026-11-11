@@ -13,13 +13,16 @@ const BARREL_HEIGHT: f32 = -0.25;
 const COLOR: Color = Color::new(255, 190, 60);
 
 pub fn stats(step: f32) -> WeaponStats {
+    let early = step.min(4.0);
+    let evolved = (step - 4.0).max(0.0);
     WeaponStats {
-        damage: 4.0 + 1.5 * step,
-        cooldown: 2.4 - 0.2 * step,
+        level: 1,
+        damage: 4.0 + 1.5 * early + 0.8 * evolved,
+        cooldown: (2.4 - 0.2 * step).max(0.8),
         size: 0.14,
         knockback: 4.0,
         speed: 72.0,
-        count: 6 + 2 * step as u32,
+        count: if step >= 9.0 { 0 } else { 6 + 2 * step as u32 },
     }
 }
 
@@ -51,7 +54,11 @@ impl Gatling {
         delta_time: f32,
     ) {
         if let Some(stats) = stats {
-            if self.remaining_in_burst == 0 {
+            let continuous = stats.level >= 10;
+            if continuous {
+                self.remaining_in_burst = 0;
+                self.reload = 0.0;
+            } else if self.remaining_in_burst == 0 {
                 self.reload -= delta_time;
                 if self.reload <= 0.0 {
                     self.remaining_in_burst = stats.count;
@@ -60,9 +67,10 @@ impl Gatling {
                 }
             }
             self.shot_timer -= delta_time;
-            while self.remaining_in_burst > 0 && self.shot_timer <= 0.0 {
+            while (continuous || self.remaining_in_burst > 0) && self.shot_timer <= 0.0 {
                 self.spin += 2.1;
-                let wobble = aim.right * (self.spin.cos() * SPREAD) + aim.up * (self.spin.sin() * SPREAD);
+                let wobble =
+                    aim.right * (self.spin.cos() * SPREAD) + aim.up * (self.spin.sin() * SPREAD);
                 let direction = (aim.forward.normalize() + wobble).normalize();
                 self.projectiles.push(Projectile {
                     position: aim.origin
@@ -75,7 +83,9 @@ impl Gatling {
                     remaining: PROJECTILE_LIFETIME,
                     traveled: 0.0,
                 });
-                self.remaining_in_burst -= 1;
+                if !continuous {
+                    self.remaining_in_burst -= 1;
+                }
                 self.shot_timer += SHOT_INTERVAL;
                 events.shots.push(WeaponKind::Gatling);
             }
@@ -116,5 +126,32 @@ mod tests {
                 .count();
         }
         assert_eq!(gatling_shots, burst);
+    }
+
+    #[test]
+    fn level_ten_fires_continuously_without_reload_pauses() {
+        let mut weapons = WeaponSystem::new();
+        weapons.inventory.unlock(WeaponKind::Gatling);
+        while weapons.inventory.upgrade(WeaponKind::Gatling) {}
+        let mut enemies = EnemySwarm::new();
+        let mut total = 0;
+        let mut silent_frames = 0;
+        let mut longest_silence = 0;
+        for _ in 0..240 {
+            let shots = run_once(&mut weapons, &mut enemies, 1.0 / 60.0)
+                .shots
+                .iter()
+                .filter(|kind| **kind == WeaponKind::Gatling)
+                .count();
+            total += shots;
+            if shots == 0 {
+                silent_frames += 1;
+                longest_silence = longest_silence.max(silent_frames);
+            } else {
+                silent_frames = 0;
+            }
+        }
+        assert!(total >= 60);
+        assert!(longest_silence <= 4);
     }
 }

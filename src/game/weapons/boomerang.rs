@@ -12,12 +12,15 @@ const MAX_LIFETIME: f32 = 6.0;
 const FAN_ANGLE: f32 = 0.22;
 const SPIN_SPEED: f32 = 14.0;
 const ARM_LENGTH: f32 = 0.9;
+const ORBIT_RADIUS: f32 = 4.0;
+const ORBIT_ANGULAR_SPEED: f32 = 2.2;
 const COLOR: Color = Color::new(200, 255, 90);
 
 pub fn stats(step: f32) -> WeaponStats {
     WeaponStats {
+        level: 1,
         damage: 14.0 + 4.0 * step,
-        cooldown: 1.8 - 0.15 * step,
+        cooldown: (1.8 - 0.15 * step).max(0.6),
         size: 0.9,
         knockback: 10.0,
         speed: 34.0,
@@ -34,6 +37,10 @@ struct Boomerang {
     direction: Vec3,
     traveled: f32,
     returning: bool,
+    passes_remaining: u8,
+    orbiting: bool,
+    orbit_angle: f32,
+    completed: bool,
     age: f32,
     recent_hits: Vec<(TargetId, f32)>,
 }
@@ -72,11 +79,23 @@ impl Boomerangs {
                 for index in 0..count {
                     let offset = (index as f32 - (count - 1) as f32 * 0.5) * FAN_ANGLE;
                     let direction = rotate_around(target_direction, aim.up.normalize(), offset);
+                    let orbit_angle = index as f32 / count as f32 * std::f32::consts::TAU;
+                    let orbiting = stats.level >= 10;
                     self.flying.push(Boomerang {
-                        position: aim.origin + direction * MUZZLE_DISTANCE,
+                        position: if orbiting {
+                            aim.origin
+                                + aim.right.normalize() * (orbit_angle.cos() * ORBIT_RADIUS)
+                                + aim.up.normalize() * (orbit_angle.sin() * ORBIT_RADIUS)
+                        } else {
+                            aim.origin + direction * MUZZLE_DISTANCE
+                        },
                         direction,
                         traveled: 0.0,
                         returning: false,
+                        passes_remaining: u8::from(stats.level >= 5),
+                        orbiting,
+                        orbit_angle,
+                        completed: false,
                         age: 0.0,
                         recent_hits: Vec::new(),
                     });
@@ -91,18 +110,28 @@ impl Boomerangs {
         let reach = range(&stats);
         for boomerang in &mut self.flying {
             boomerang.age += delta_time;
+            if stats.level >= 10 {
+                boomerang.orbiting = true;
+            }
             boomerang.recent_hits.retain_mut(|(_, cooldown)| {
                 *cooldown -= delta_time;
                 *cooldown > 0.0
             });
-            let velocity = if boomerang.returning {
+            let velocity = if boomerang.orbiting {
+                boomerang.orbit_angle += ORBIT_ANGULAR_SPEED * delta_time;
+                let next = aim.origin
+                    + aim.right.normalize() * (boomerang.orbit_angle.cos() * ORBIT_RADIUS)
+                    + aim.up.normalize() * (boomerang.orbit_angle.sin() * ORBIT_RADIUS);
+                (next - boomerang.position) * (1.0 / delta_time)
+            } else if boomerang.returning {
                 (aim.origin - boomerang.position).normalize() * (stats.speed * 1.2)
             } else {
                 boomerang.direction * stats.speed
             };
             let start = boomerang.position;
             let end = start + velocity * delta_time;
-            if !boomerang.returning
+            if !boomerang.orbiting
+                && !boomerang.returning
                 && targets.obstacles.iter().any(|collider| {
                     super::segment_sphere_hit(start, end, collider.center, collider.radius)
                         .is_some()
@@ -113,7 +142,7 @@ impl Boomerangs {
             }
             boomerang.position = end;
             boomerang.traveled += (end - start).length();
-            if boomerang.traveled >= reach {
+            if !boomerang.orbiting && boomerang.traveled >= reach {
                 boomerang.returning = true;
             }
             for (target, position) in targets.within(boomerang.position, stats.size) {
@@ -124,11 +153,28 @@ impl Boomerangs {
                 targets.hit(target, stats.damage, impulse, position, events);
                 boomerang.recent_hits.push((target, HIT_COOLDOWN));
             }
+            if !boomerang.orbiting
+                && boomerang.returning
+                && (boomerang.position - aim.origin).length() < CATCH_DISTANCE
+            {
+                if boomerang.passes_remaining > 0 {
+                    boomerang.passes_remaining -= 1;
+                    boomerang.returning = false;
+                    boomerang.traveled = 0.0;
+                    boomerang.direction = velocity.normalize();
+                    boomerang.position = aim.origin + boomerang.direction * CATCH_DISTANCE;
+                } else {
+                    boomerang.completed = true;
+                }
+            }
         }
         self.flying.retain(|boomerang| {
-            let caught =
-                boomerang.returning && (boomerang.position - aim.origin).length() < CATCH_DISTANCE;
-            !caught && boomerang.age < MAX_LIFETIME
+            let lifetime = if stats.level >= 5 {
+                MAX_LIFETIME * 2.0
+            } else {
+                MAX_LIFETIME
+            };
+            !boomerang.completed && (boomerang.orbiting || boomerang.age < lifetime)
         });
     }
 
@@ -192,5 +238,47 @@ mod tests {
             .find(|enemy| enemy.id == id)
             .unwrap();
         assert!(enemy.health < enemy.max_health);
+    }
+
+    #[test]
+    fn level_five_passes_the_ship_before_the_second_return() {
+        let mut weapons = WeaponSystem::new();
+        weapons.inventory.unlock(WeaponKind::Boomerang);
+        while weapons.inventory.level(WeaponKind::Boomerang) < 5 {
+            weapons.inventory.upgrade(WeaponKind::Boomerang);
+        }
+        let mut enemies = EnemySwarm::new();
+        for _ in 0..150 {
+            run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+        }
+        assert!(!weapons.boomerang.flying.is_empty());
+        assert!(weapons
+            .boomerang
+            .flying
+            .iter()
+            .all(|boomerang| boomerang.passes_remaining == 0));
+        let mut caught = false;
+        for _ in 0..300 {
+            run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+            caught |= weapons.boomerang.flying.is_empty();
+        }
+        assert!(caught);
+    }
+
+    #[test]
+    fn level_ten_boomerangs_remain_orbiting_the_ship() {
+        let mut weapons = WeaponSystem::new();
+        weapons.inventory.unlock(WeaponKind::Boomerang);
+        while weapons.inventory.upgrade(WeaponKind::Boomerang) {}
+        let mut enemies = EnemySwarm::new();
+        for _ in 0..720 {
+            run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+        }
+        assert_eq!(weapons.boomerang.flying.len(), 3);
+        assert!(weapons
+            .boomerang
+            .flying
+            .iter()
+            .all(|boomerang| boomerang.orbiting));
     }
 }

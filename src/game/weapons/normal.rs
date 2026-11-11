@@ -12,13 +12,16 @@ const LINE_LENGTH: f32 = 2.4;
 const COLOR: Color = Color::new(255, 32, 32);
 
 pub fn stats(step: f32) -> WeaponStats {
+    let early = step.min(4.0);
+    let evolved = (step - 4.0).max(0.0);
     WeaponStats {
-        damage: 10.0 + 3.0 * step,
-        cooldown: 0.30 - 0.03 * step,
+        level: 1,
+        damage: 10.0 + 3.0 * early + 2.0 * evolved,
+        cooldown: (0.30 - 0.03 * early - 0.004 * evolved).max(0.16),
         size: 0.18,
         knockback: 12.0,
         speed: 156.0,
-        count: 1,
+        count: 1 + u32::from(step >= 4.0),
     }
 }
 
@@ -49,21 +52,29 @@ impl NormalGun {
             self.timer -= delta_time;
             let direction = aim.forward.normalize();
             while self.timer <= 0.0 {
-                let muzzle = aim.origin
-                    + direction * MUZZLE_DISTANCE
-                    + aim.right.normalize() * (WING_OFFSET * self.side)
-                    + aim.up.normalize() * WING_HEIGHT;
-                self.projectiles.push(Projectile {
-                    position: muzzle,
-                    velocity: direction * stats.speed,
-                    radius: stats.size,
-                    damage: stats.damage,
-                    knockback: stats.knockback,
-                    remaining: PROJECTILE_LIFETIME,
-                    traveled: 0.0,
-                });
+                let sides = if stats.count >= 2 {
+                    vec![-1.0, 1.0]
+                } else {
+                    let side = self.side;
+                    self.side = -self.side;
+                    vec![side]
+                };
+                for side in sides {
+                    let muzzle = aim.origin
+                        + direction * MUZZLE_DISTANCE
+                        + aim.right.normalize() * (WING_OFFSET * side)
+                        + aim.up.normalize() * WING_HEIGHT;
+                    self.projectiles.push(Projectile {
+                        position: muzzle,
+                        velocity: direction * stats.speed,
+                        radius: stats.size,
+                        damage: stats.damage,
+                        knockback: stats.knockback,
+                        remaining: PROJECTILE_LIFETIME,
+                        traveled: 0.0,
+                    });
+                }
                 self.timer += stats.cooldown;
-                self.side = -self.side;
                 events.shots.push(WeaponKind::Normal);
             }
         }
@@ -85,7 +96,7 @@ impl NormalGun {
 #[cfg(test)]
 mod tests {
     use super::super::tests::run_once;
-    use super::super::WeaponSystem;
+    use super::super::{WeaponKind, WeaponSystem};
     use crate::engine::math::Vec3;
     use crate::game::enemies::EnemySwarm;
 
@@ -118,5 +129,20 @@ mod tests {
     #[test]
     fn normal_rays_use_the_tripled_projectile_speed() {
         assert_eq!(super::stats(0.0).speed, 156.0);
+    }
+
+    #[test]
+    fn level_five_fires_both_wing_cannons_together() {
+        let mut weapons = WeaponSystem::new();
+        for _ in 1..5 {
+            weapons.inventory.upgrade(WeaponKind::Normal);
+        }
+        let mut enemies = EnemySwarm::new();
+        let events = run_once(&mut weapons, &mut enemies, 1.0 / 60.0);
+        let projectiles: Vec<_> = weapons.projectiles().collect();
+        assert_eq!(events.shots, vec![WeaponKind::Normal]);
+        assert_eq!(projectiles.len(), 2);
+        assert!(projectiles[0].position.x < 0.0);
+        assert!(projectiles[1].position.x > 0.0);
     }
 }

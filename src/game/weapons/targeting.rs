@@ -44,15 +44,19 @@ pub fn segment_sphere_hit(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> 
 
 impl Targets<'_> {
     pub fn nearest_enemy(&self, origin: Vec3) -> Option<Vec3> {
-        self.enemies
+        self.nearest_enemies(origin, 1).into_iter().next()
+    }
+
+    pub fn nearest_enemies(&self, origin: Vec3, count: usize) -> Vec<Vec3> {
+        let mut positions: Vec<_> = self
+            .enemies
             .enemies()
             .iter()
-            .min_by(|a, b| {
-                (a.position - origin)
-                    .length()
-                    .total_cmp(&(b.position - origin).length())
-            })
             .map(|enemy| enemy.position)
+            .collect();
+        positions.sort_by(|a, b| (*a - origin).length().total_cmp(&(*b - origin).length()));
+        positions.truncate(count);
+        positions
     }
 
     fn spheres(&self) -> Vec<(TargetId, Vec3, f32)> {

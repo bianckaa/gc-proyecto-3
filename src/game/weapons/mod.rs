@@ -21,7 +21,7 @@ use crate::game::enemies::{EnemyKind, EnemySwarm};
 use crate::game::run_world::{DestroyedPlanet, RunWorld};
 use crate::renderer::Renderer;
 
-pub const MAX_WEAPON_LEVEL: u8 = 5;
+pub const MAX_WEAPON_LEVEL: u8 = 10;
 pub const MUZZLE_DISTANCE: f32 = 1.4;
 
 pub struct WeaponSystem {
