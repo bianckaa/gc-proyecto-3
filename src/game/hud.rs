@@ -25,7 +25,7 @@ const PROGRESS_BAR_WIDTH: i32 = 108;
 const PROGRESS_BAR_HEIGHT: i32 = 4;
 const LOADOUT_LINE: f32 = 8.0;
 
-pub const CONTROLS: [(&str, &str); 19] = [
+pub const CONTROLS: [(&str, &str); 20] = [
     ("W / S", "VOLAR; ORBITA: CERCA / LEJOS"),
     ("A / D", "GIRAR; ORBITA: RODEAR"),
     ("FLECHAS", "PITCH Y GIRO"),
@@ -33,6 +33,7 @@ pub const CONTROLS: [(&str, &str); 19] = [
     ("Q / E", "ROLL"),
     ("ESPACIO / CTRL", "SUBIR / BAJAR"),
     ("SHIFT", "TURBO"),
+    ("R", "LOOP EVASIVO (JUEGO)"),
     ("C", "CAMARA SEGUIR / LIBRE"),
     ("RUEDA", "DISTANCIA DE CAMARA"),
     ("1 - 5", "ELEGIR PLANETA (MENU)"),

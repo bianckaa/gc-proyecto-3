@@ -69,6 +69,7 @@ const MENU_CAMERA_FAR: f32 = 900.0;
 const FOLLOW_HEIGHT_RATIO: f32 = 0.36;
 const FOLLOW_LOOK_AHEAD: f32 = 9.0;
 const FOLLOW_SMOOTHING: f32 = 6.0;
+const EVASIVE_LOOP_CAMERA_SMOOTHING: f32 = 1.5;
 const DEFAULT_FOLLOW_DISTANCE: f32 = 4.6;
 const MIN_FOLLOW_DISTANCE: f32 = 3.0;
 const MAX_FOLLOW_DISTANCE: f32 = 14.0;
@@ -561,6 +562,11 @@ impl Game {
         }
 
         self.handle_commands(input, camera, effect);
+        self.ship.speed_multiplier = flight_speed_multiplier(
+            self.program_mode,
+            self.buffs.multiplier(BuffKind::ShipSpeed),
+        );
+        self.update_evasive_loop_input(input);
         self.update_upgrades(input, delta_time);
         self.update_ending(input, delta_time, camera);
         if self.program_mode == ProgramMode::Game && self.session.update(delta_time) {
@@ -594,11 +600,6 @@ impl Game {
         } else {
             controls
         };
-        self.ship.speed_multiplier = flight_speed_multiplier(
-            self.program_mode,
-            self.buffs.multiplier(BuffKind::ShipSpeed),
-        );
-
         if self.simulation_frozen() {
         } else if self.warp.is_traveling() {
             let target = self.warp.target().unwrap_or(self.destination);
@@ -1129,6 +1130,7 @@ impl Game {
     pub fn damage_player(&mut self, amount: f32) -> bool {
         if self.program_mode != ProgramMode::Game || self.session.state() != RunState::Playing
             || self.buffs.is_shielded()
+            || self.ship.is_evasive_loop_invulnerable()
         {
             return false;
         }
@@ -1265,6 +1267,29 @@ impl Game {
             if input.was_pressed(Key::F) {
                 self.start_warp(effect);
             }
+        }
+    }
+
+    fn update_evasive_loop_input(&mut self, input: &InputState) {
+        if !input.was_pressed(Key::R)
+            || self.program_mode != ProgramMode::Game
+            || self.session.state() != RunState::Playing
+        {
+            return;
+        }
+        if self.camera_mode != CameraMode::Follow || self.warp.is_traveling() {
+            self.notify("ESQUIVA NO DISPONIBLE");
+            return;
+        }
+        if self.ship.try_start_evasive_loop() {
+            self.notify("LOOP EVASIVO");
+        } else if self.ship.evasive_loop_cooldown() > 0.0 {
+            self.notify(format!(
+                "ESQUIVA RECARGANDO {:.1}S",
+                self.ship.evasive_loop_cooldown()
+            ));
+        } else {
+            self.notify("ESQUIVA NO DISPONIBLE");
         }
     }
 
@@ -1465,6 +1490,14 @@ impl Game {
                     FOLLOW_SMOOTHING + (ORBIT_CAMERA_SMOOTHING - FOLLOW_SMOOTHING) * eased,
                 )
             }
+            None if self.ship.is_evasive_looping() => (
+                self.ship.evasive_camera_forward(),
+                self.ship.evasive_camera_up(),
+                self.follow_distance,
+                self.follow_distance * FOLLOW_HEIGHT_RATIO,
+                FOLLOW_LOOK_AHEAD,
+                EVASIVE_LOOP_CAMERA_SMOOTHING,
+            ),
             None => (
                 self.ship.forward(),
                 self.ship.up(),
@@ -2125,6 +2158,22 @@ mod tests {
         game.configure_mode(ProgramMode::Game, &mut camera);
         assert_eq!(game.progression, PlayerProgression::new());
         assert_eq!(game.session.state(), RunState::Playing);
+    }
+
+    #[test]
+    fn evasive_loop_invulnerability_blocks_player_damage() {
+        let (mut game, mut camera) = test_game();
+        game.configure_mode(ProgramMode::Game, &mut camera);
+        game.ship.speed_multiplier = GAME_FLIGHT_SPEED_MULTIPLIER;
+        assert!(game.ship.try_start_evasive_loop());
+
+        let health = game.progression.health();
+        assert!(!game.damage_player(50.0));
+        assert_eq!(game.progression.health(), health);
+
+        game.ship.update_free(&ShipControls::default(), 0.34);
+        assert!(!game.damage_player(50.0));
+        assert_eq!(game.progression.health(), health - 50.0);
     }
 
     #[test]

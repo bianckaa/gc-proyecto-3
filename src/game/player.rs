@@ -1,5 +1,6 @@
 use crate::engine::math::{Mat4, Vec3};
 use crate::engine::transform::{basis_rotation, exponential_blend, rotate_around};
+use std::f32::consts::TAU;
 
 pub const SHIP_RADIUS: f32 = 0.9;
 const THRUST: f32 = 16.0;
@@ -25,6 +26,10 @@ const ORBIT_GRAB_RADIUS_FACTOR: f32 = 2.35;
 const ORBIT_GRAB_MARGIN: f32 = 1.5;
 const ORBIT_ALIGN_RESPONSE: f32 = 3.2;
 const ORBIT_ENTRY_RESPONSE: f32 = 2.8;
+const EVASIVE_LOOP_DURATION: f32 = 0.9;
+const EVASIVE_LOOP_INVULNERABILITY: f32 = 0.32;
+const EVASIVE_LOOP_COOLDOWN: f32 = 3.0;
+const EVASIVE_LOOP_SPEED: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShipControls {
@@ -56,6 +61,10 @@ pub struct Ship {
     up: Vec3,
     angular_velocity: Vec3,
     bank: f32,
+    evasive_loop_remaining: f32,
+    evasive_loop_cooldown: f32,
+    evasive_loop_forward: Vec3,
+    evasive_loop_up: Vec3,
     pub mode: FlightMode,
 }
 
@@ -74,6 +83,10 @@ impl Ship {
             ),
             angular_velocity: Vec3::default(),
             bank: 0.0,
+            evasive_loop_remaining: 0.0,
+            evasive_loop_cooldown: 0.0,
+            evasive_loop_forward: Vec3::default(),
+            evasive_loop_up: Vec3::default(),
             mode: FlightMode::Free,
         }
     }
@@ -92,6 +105,52 @@ impl Ship {
 
     pub fn speed(&self) -> f32 {
         self.velocity.length()
+    }
+
+    pub fn is_evasive_looping(&self) -> bool {
+        self.evasive_loop_remaining > 0.0
+    }
+
+    pub fn evasive_loop_cooldown(&self) -> f32 {
+        self.evasive_loop_cooldown
+    }
+
+    pub fn evasive_camera_forward(&self) -> Vec3 {
+        if self.is_evasive_looping() {
+            self.evasive_loop_forward
+        } else {
+            self.forward
+        }
+    }
+
+    pub fn evasive_camera_up(&self) -> Vec3 {
+        if self.is_evasive_looping() {
+            self.evasive_loop_up
+        } else {
+            self.up
+        }
+    }
+
+    pub fn is_evasive_loop_invulnerable(&self) -> bool {
+        self.is_evasive_looping()
+            && self.evasive_loop_remaining > EVASIVE_LOOP_DURATION - EVASIVE_LOOP_INVULNERABILITY
+    }
+
+    pub fn try_start_evasive_loop(&mut self) -> bool {
+        if self.mode != FlightMode::Free
+            || self.is_evasive_looping()
+            || self.evasive_loop_cooldown > 0.0
+        {
+            return false;
+        }
+        self.evasive_loop_remaining = EVASIVE_LOOP_DURATION;
+        self.evasive_loop_cooldown = EVASIVE_LOOP_COOLDOWN;
+        self.evasive_loop_forward = self.forward;
+        self.evasive_loop_up = self.up;
+        self.angular_velocity = Vec3::default();
+        self.bank = 0.0;
+        self.velocity = self.forward * (EVASIVE_LOOP_SPEED * self.speed_multiplier);
+        true
     }
 
     pub fn is_orbiting(&self) -> bool {
@@ -162,6 +221,11 @@ impl Ship {
     }
 
     pub fn update_free(&mut self, controls: &ShipControls, delta_time: f32) {
+        self.evasive_loop_cooldown = (self.evasive_loop_cooldown - delta_time).max(0.0);
+        if self.is_evasive_looping() {
+            self.update_evasive_loop(delta_time);
+            return;
+        }
         self.steer(controls, delta_time);
         let thrust = if controls.boost { BOOST_THRUST } else { THRUST } * self.speed_multiplier;
         let acceleration = self.forward * (controls.thrust * thrust)
@@ -180,6 +244,27 @@ impl Ship {
             self.velocity = self.velocity * (target / speed);
         }
         self.position = self.position + self.velocity * delta_time;
+    }
+
+    fn update_evasive_loop(&mut self, delta_time: f32) {
+        self.evasive_loop_remaining = (self.evasive_loop_remaining - delta_time).max(0.0);
+        if self.evasive_loop_remaining < 1e-4 {
+            self.evasive_loop_remaining = 0.0;
+        }
+        let progress = 1.0 - self.evasive_loop_remaining / EVASIVE_LOOP_DURATION;
+        let right = self
+            .evasive_loop_forward
+            .cross(self.evasive_loop_up)
+            .normalize();
+        let angle = TAU * progress;
+        self.forward = rotate_around(self.evasive_loop_forward, right, angle).normalize();
+        self.up = rotate_around(self.evasive_loop_up, right, angle).normalize();
+        self.velocity = self.forward * (EVASIVE_LOOP_SPEED * self.speed_multiplier);
+        self.position = self.position + self.velocity * delta_time;
+        if !self.is_evasive_looping() {
+            self.set_orientation(self.evasive_loop_forward, self.evasive_loop_up);
+            self.velocity = self.forward * (EVASIVE_LOOP_SPEED * self.speed_multiplier);
+        }
     }
 
     pub fn enter_orbit(&mut self, body: usize, center: Vec3, body_radius: f32) {
@@ -285,5 +370,55 @@ impl Ship {
             transition,
         };
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evasive_loop_flies_a_vertical_circle_and_recovers_heading() {
+        let mut ship = Ship::new(Vec3::default(), Vec3::new(0.0, 0.0, -1.0));
+        ship.speed_multiplier = 1.5;
+        let forward = ship.forward();
+
+        assert!(ship.try_start_evasive_loop());
+        assert!(ship.velocity.dot(forward) > 0.0);
+        assert!(ship.is_evasive_loop_invulnerable());
+        assert!(!ship.try_start_evasive_loop());
+
+        let step = EVASIVE_LOOP_DURATION / 60.0;
+        for _ in 0..15 {
+            ship.update_free(&ShipControls::default(), step);
+        }
+        assert!(ship.forward().dot(ship.evasive_loop_up) > 0.9);
+        assert!(ship.evasive_camera_forward().dot(forward) > 0.999);
+        assert!(ship.evasive_camera_up().dot(ship.evasive_loop_up) > 0.999);
+        assert!(ship.position.y > 0.0);
+
+        for _ in 0..15 {
+            ship.update_free(&ShipControls::default(), step);
+        }
+        assert!(ship.forward().dot(forward) < -0.9);
+        assert!(!ship.is_evasive_loop_invulnerable());
+
+        for _ in 0..30 {
+            ship.update_free(&ShipControls::default(), step);
+        }
+        assert!(!ship.is_evasive_looping());
+        assert!(ship.forward().dot(forward) > 0.999);
+        assert!(!ship.try_start_evasive_loop());
+
+        ship.update_free(&ShipControls::default(), EVASIVE_LOOP_COOLDOWN);
+        assert!(ship.try_start_evasive_loop());
+    }
+
+    #[test]
+    fn evasive_loop_cannot_start_while_orbiting() {
+        let mut ship = Ship::new(Vec3::new(10.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0));
+        ship.enter_orbit(1, Vec3::default(), 2.0);
+
+        assert!(!ship.try_start_evasive_loop());
     }
 }
