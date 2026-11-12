@@ -1,201 +1,138 @@
-# gc-proyecto-3
+# Proyecto 3
 
-Proyecto 3 - Gráficas por Computadora
+Proyecto final de Gráficas por Computadora: sistema solar explorable desde una nave, dibujado con un renderizador por software propio en Rust.
 
-Software renderer escrito en Rust que muestra un sistema solar explorable con una nave. El programa inicia en un menú 3D de gran escala y entra al juego al volar dentro del Sol. Todo el dibujo 3D ocurre en un framebuffer propio de 480x270 píxeles; raylib solo abre la ventana, lee el teclado y el mouse, mide el tiempo, muestra el framebuffer como textura y escribe el texto del HUD.
+| Sol | Rocoso | Gaseoso |
+| --- | --- | --- |
+| ![Sol](screenshots/sun.png) | ![Planeta rocoso](screenshots/rocky.png) | ![Planeta gaseoso](screenshots/gas.png) |
+| **Núcleo** | **Droide** | **Gaseoso sin dithering** |
+| ![Núcleo](screenshots/core.png) | ![Droide](screenshots/droid.png) | ![Gaseoso sin dithering](screenshots/gas_no_dither.png) |
 
-## Cómo compilar y ejecutar
+## Video
+
+🔗 [Video de demostración](https://youtu.be/oH7Ywwopz0o)
+
+Muestra el vuelo espacial, el acercamiento a un planeta, la vuelta alrededor de él y el alejamiento. 
+
+## Integrantes
+
+- Diana Sosa
+- Adrián Penagos
+- Biancka Raxón
+
+## Ejecución
+
+Requisitos: Rust estable, CMake, LLVM/Clang y un compilador de C (en Windows, las herramientas de compilación de Visual Studio).
 
 ```bash
 cargo run --release
 ```
 
-El juego carga los modelos desde `assets/models`. Si se ejecuta desde otra carpeta, busca la carpeta junto al ejecutable y en la raíz del proyecto.
-
-Pruebas:
+Demo para comparar descarte y niveles de detalle:
 
 ```bash
-cargo test
+cargo run --release --example renderer_demo
 ```
+
+Nota: en Windows, si la compilación de raylib falla, clonen el repositorio en una ruta corta.
 
 ## Controles
 
 | Tecla | Acción |
 | --- | --- |
-| `W` / `S` | Acelerar / frenar y retroceder |
-| `A` / `D` o flechas izquierda / derecha | Girar (yaw) |
-| Flechas arriba / abajo | Subir o bajar la nariz (pitch) |
-| Clic derecho + mouse | Apuntar la nave con el mouse |
-| `Q` / `E` | Roll |
+| `W` / `S` | Acelerar / frenar. En órbita: acercarse / alejarse y salir |
+| `A` / `D` | Girar. En órbita: rodear el planeta |
+| Flechas | Girar y cabecear |
+| Clic derecho + mouse | Apuntar la nave |
+| `Q` / `E` | Alabeo |
 | `Espacio` / `Ctrl` | Subir / bajar |
 | `Shift` | Turbo |
-| `C` | Cambiar entre cámara de seguimiento y cámara libre |
-| Rueda del mouse | Distancia de la cámara |
-| `1` a `5` | Elegir planeta destino en el menú |
-| `Tab` | Siguiente destino en el menú (incluye el Sol y la Luna) |
-| `F` | Warp al destino en el menú |
-| `-` / `=` | Velocidad de las órbitas en vivo |
-| `I` | Editar la semilla de la próxima partida desde el menú |
-| `R` | Generar una semilla aleatoria desde el menú |
-| `M` | Métricas de rendimiento |
-| `G` | Activar o desactivar la gravedad de los cuerpos |
-| `Enter` | Confirmar en la ruleta; volver al menú desde los resultados |
+| `1` a `5` / `Tab` | Elegir destino |
+| `F` | Warp al destino |
+| `C` | Cámara de seguimiento / cámara libre |
+| `G` | Activar / desactivar gravedad |
+| `M` | Contadores de triángulos y objetos descartados |
 | `H` | Panel de controles |
-| `Esc` | Cerrar el panel; volver al menú desde el juego; salir desde el menú |
+| `Esc` | Salir |
 
-En el menú, los planetas tienen el doble de su tamaño normal y sus órbitas están separadas 3×. Núcleo y Droide reciben además 1.5× de tamaño visual, pero conservan el mismo radio de captura de órbita. La órbita de inspección se activa automáticamente al acercarse lo suficiente a un planeta y la cámara transiciona suavemente hasta apuntar a su centro. Dentro de ella, `A` / `D` rodean el planeta, `W` acerca la nave y `S` la aleja; continuar alejándose libera la órbita. El Sol es atravesable: entrar profundamente en él produce un destello blanco e inicia el modo juego.
+En `renderer_demo`: `C` activa o desactiva el descarte, `L` los niveles de detalle, `N` el mapeo de normales y `M` los contadores.
 
-La semilla mostrada en la esquina superior izquierda determina la generación procedural de la partida. En el menú, `I` permite escribir una semilla numérica y confirmarla con `Enter`; `Backspace` borra y `Esc` cancela la edición. `R` prepara una semilla aleatoria. Reutilizar el mismo número reproduce la misma distribución procedural.
+## Recorrido sugerido
 
-Durante el juego desaparece el sistema solar fijo del menú y permanece únicamente el Sol central, que comienza con cinco veces su tamaño estándar. Los planetas, recompensas y enemigos de la partida serán generados por los sistemas roguelike en lugar de reutilizar los cuerpos decorativos del menú. El mouse tiene una sensibilidad mayor para que los cambios de dirección respondan con menos recorrido.
+1. Saltar la intro con `Enter` y observar el sistema solar del menú.
+2. Presionar `M` para mostrar los contadores.
+3. Volar con `W`, `Shift`, `A` / `D` y clic derecho + mouse.
+4. Presionar `3` y `F` para hacer warp hacia Rocoso.
+5. Mirar alrededor con clic derecho + mouse y avanzar con `W` hasta que aparezca **"ORBITA AUTOMATICA"**.
+6. Bajar con `W` y mantener `D` para dar una vuelta completa; los cristales y las rocas giran con el planeta.
+7. Mantener `S` hasta **"ORBITA LIBERADA"** y alejarse con `W` + `Shift`.
+8. Opcional: pasar cerca de un planeta para ver la gravedad (`G` la apaga), chocar contra uno para ver la colisión y volar dentro del Sol para iniciar el modo juego.
 
-La partida dura 15 minutos y el reloj permanece centrado en la parte superior. Durante ese tiempo, el Sol crece lentamente y acelera su expansión al acercarse el colapso. El Sol permanece inmóvil mientras la nave esté dentro de 300 unidades; fuera de esa zona se acerca de forma gradual y acelera únicamente a distancias extremas. La cámara mantiene margen suficiente para evitar que desaparezca durante vuelos prolongados con turbo.
+## Características solicitadas para evaluación
 
-Cada partida inicia con 100 puntos de vida, nivel 1 y una barra de experiencia vacía. Vida, nivel y progreso de XP permanecen visibles sobre la barra inferior. La experiencia requerida aumenta con cada nivel; estas estadísticas se reinician al comenzar una nueva partida.
+| Característica | Puntos | Dónde se ve |
+| --- | --- | --- |
+| Cinco planetas distinguibles: Vulcano, Núcleo, Rocoso, Gaseoso y Droide | 50 | Menú inicial; `1` a `5` y `F` para ir a cada uno |
+| Dos tipos de modelo sobre la superficie: cristales y rocas | 10 | Superficie de Rocoso y de la Luna |
+| Distribución procedural reproducible con ruido y semilla | 10 | Rocoso y Luna; la semilla aparece en pantalla |
+| Objetos orientados sobre la superficie mientras el planeta rota | 5 | Rocoso en órbita |
+| Cuatro shaders propios: Sol, lava, gaseoso y Droide | 24 | Cada planeta |
+| Shader animado | 8 | Sol, Gaseoso y Droide |
+| Mapeo de normales | 8 | Asteroides y rocas; `N` en `renderer_demo` |
+| Deformación de geometría con ruido | 10 | Asteroides del cinturón y rocas de superficie |
+| Subdivisión procedural de geometría antes de rasterizar | 10 | Luna, asteroides y rocas (icosfera) |
+| Órbita local para rodear un planeta | 8 | Acercarse a un planeta; `A` / `D` |
+| Aceleración, frenado y giro progresivos con paso fijo | 8 | Todo el vuelo |
+| Gravedad que desvía la nave | 10 | Pasar cerca de un planeta; `G` para comparar |
+| Colisión con los cuerpos | 4 | Intentar atravesar un planeta |
+| Descarte fuera de la vista | 7 | Contador `CUL` con `M`; `C` en `renderer_demo` |
+| Niveles de detalle por distancia | 8 | Contador `TRI` con `M`; `L` en `renderer_demo` |
+| Coherencia visual | 5 | Todo el programa |
+| Claridad de la experiencia | 5 | Panel `H`, avisos y órbita automática |
 
-Durante la partida aparece un único tipo de nave enemiga usando el modelo `ENEMY1.obj`. Las naves se generan detrás del jugador, lo persiguen y causan daño por contacto; el choque empuja en direcciones opuestas tanto a la nave como al enemigo y después concede un breve periodo de invulnerabilidad. La salud máxima de todos los enemigos aumenta con el nivel del jugador y conserva proporcionalmente cualquier daño que ya hayan recibido. Las naves se separan entre sí, no pueden ocupar el volumen del jugador y respetan los colliders del Sol y del escenario.
+## Arquitectura
 
-El director de hordas aumenta continuamente la presión durante los 15 minutos: reduce el intervalo entre apariciones y eleva el límite de enemigos activos desde 6 hasta un máximo de 48. Este escalado solo cambia la cantidad; la salud de cada enemigo continúa dependiendo exclusivamente del nivel del jugador.
+| Módulo | Responsabilidad |
+| --- | --- |
+| `src/platform/` | Ventana, entrada, tiempo con paso fijo, audio y música sintetizados |
+| `src/assets/` | Cargador OBJ propio, mallas compartidas y grupos de nivel de detalle |
+| `src/engine/` | Matemática vectorial, transformaciones, cámara, escena, colisiones y gravedad |
+| `src/renderer/` | Pipeline de software: transformación, recorte, rasterización, depth buffer, shaders, descarte, niveles de detalle y efectos de pantalla |
+| `src/world/` | Sistema solar, órbitas, cinturón de asteroides y distribución de superficie |
+| `src/game/` | Menú, nave, cámara, warp, HUD y modo juego |
+| `src/debug/` | Contadores de rendimiento |
 
-El escenario de la partida se construye en sectores procedurales tridimensionales de 300 unidades. La ventana activa se extiende más allá del plano visible de la cámara, por lo que los sectores solo se cargan o descargan fuera de pantalla. Cada sector tiene 30% de probabilidad de proponer un planeta, aunque los candidatos demasiado cercanos se descartan para conservar una separación mínima de 200 unidades. Cada cuerpo puede ser rocoso, gaseoso, núcleo o droide y recibe variaciones deterministas de tamaño, proporciones, color, rotación y resistencia según la semilla. Los planetas tienen colisión física y los eliminados no reaparecen al regresar.
+## Modo juego
 
-La nave comienza con un arma normal automática que dispara líneas rojas en la dirección del crosshair. Cada disparo alterna entre los cilindros de las alas, causa 10 puntos de daño, empuja al objetivo con knockback y los enemigos iniciales requieren dos impactos. Los rayos viajan más rápido que la velocidad turbo de la nave, usan colisión continua para no atravesar objetivos entre pasos de simulación y desaparecen al golpear un enemigo, el Sol u otro collider.
+Volar dentro del Sol inicia una partida de supervivencia de 15 minutos.
+
+- **Escenario:** el sistema del menú desaparece y queda solo el Sol, que crece hasta colapsar. Sectores procedurales cargan planetas rocosos, gaseosos, núcleos y droides según la semilla.
+- **Progreso:** la nave empieza con 100 puntos de vida y nivel 1. Cada subida de nivel abre una ruleta con tres mejoras.
+- **Armas automáticas** (niveles 1 a 10): rayo, gatling, láser, aura, bumerán y bombas.
+- **Enemigos:** naves comunes, resistentes y élite. Un director de hordas aumenta la cantidad con el tiempo y las élite disparan rayos verdes con aviso previo.
+- **Planetas destructibles:** cada tipo entrega una recompensa distinta. Núcleo y Droide actúan como jefes que disparan e invocan naves.
+- **Finales:** destrucción de la nave o colapso solar en el minuto 15, con un agujero negro que distorsiona la imagen. La pantalla de resultados permite volver al menú (`Enter`) o reintentar con la misma semilla (`R`).
 
 ## Modelos
 
 | Archivo | Uso |
 | --- | --- |
-| `ETA_2.obj` | Nave del jugador |
-| `ENEMY1.obj` | Naves que patrullan alrededor de los planetas |
-| `Planet.obj` | Sol, planeta rocoso y planeta gaseoso |
-| `CORE_.obj` | Planeta núcleo |
-| `Droid_confed.obj` | Estación droide |
+| `assets/models/ETA_2.obj` | Nave del jugador |
+| `assets/models/ENEMY1.obj` | Naves enemigas |
+| `assets/models/Planet.obj` | Sol, planeta rocoso y planeta gaseoso |
+| `assets/models/CORE_.obj` | Planeta Núcleo |
+| `assets/models/Droid_confed.obj` | Estación Droide |
 
-Los cristales de la superficie se generan por código. Si se agrega `assets/models/crystal.obj`, el juego lo usa en su lugar sin cambiar código. Si falta cualquier modelo, el juego usa una malla temporal y avisa en la consola.
-
-## Intro
-
-Al abrir el programa se reproduce una intro al estilo de Star Wars antes del menú: texto de apertura azul, título que se aleja, texto amarillo inclinado en perspectiva y un paneo de cámara que termina con un salto warp. `Enter`, `Esc` o `Espacio` la saltan.
-
-## Armas
-
-Todas las armas que se obtienen disparan solas al mismo tiempo. Cada una tiene niveles del 1 al 5 que mejoran su daño, recarga, tamaño y alcance.
-
-| Arma | Comportamiento | Código |
-| --- | --- | --- |
-| Rayo | Arma inicial. Proyectiles rojos alternando entre las alas | `src/game/weapons/normal.rs` |
-| Gatling | Ráfagas rápidas de proyectiles amarillos con recarga interna | `src/game/weapons/gatling.rs` |
-| Láser | Haz rosa automático dirigido al enemigo más cercano; atraviesa todos los objetivos en línea y tiene recarga larga | `src/game/weapons/laser.rs` |
-| Aura | Anillo turquesa que daña y empuja periódicamente a los enemigos alrededor de toda la nave, sin afectar planetas; daño y DPS aumentan por nivel | `src/game/weapons/aura.rs` |
-| Bumerán | Se dirige automáticamente al enemigo más cercano, golpea al ir y al volver y regresa a la nave | `src/game/weapons/boomerang.rs` |
-| Bombas | Se lanzan periódicamente y explotan en área al chocar o al agotarse la mecha | `src/game/weapons/bombs.rs` |
-
-Las armas dañan enemigos y planetas. El Sol bloquea los disparos.
-
-## Enemigos
-
-| Tipo | Tamaño | Vida | Comportamiento |
-| --- | --- | --- | --- |
-| Común | 1× | Escala con el nivel del jugador | Persigue y daña por contacto |
-| Resistente | 1.35×, azul acero | 2.5× y crece con el tiempo | Aparece desde el segundo 45, cada vez con más frecuencia |
-| Élite | 1.875×, rojo | 8× y crece con el tiempo | Aparece desde el minuto 2, de forma controlada (de 1 a 3 activos), muestra barra de vida y dispara rayos verdes |
-
-Código: `src/game/enemies.rs` y `src/game/wave_director.rs`.
-
-## Rayos verdes enemigos
-
-Sistema compartido en `src/game/enemy_beams.rs` para élites, Droid y Core. Cada rayo muestra primero una línea punteada parpadeante como aviso, después dispara en la dirección marcada y dura un instante. Dañan al jugador y a los demás enemigos, nunca a quien los disparó, chocan con obstáculos y empujan. Un tiempo mínimo entre rayos y un máximo de rayos activos evitan que el fuego sea imposible de esquivar. Los rayos de una estructura se cancelan inmediatamente cuando esta es destruida.
-
-## Planetas destructibles y recompensas
-
-Los planetas de la partida tienen vida. Al apuntarlos aparece su barra de vida en la parte superior. Al destruirlos explotan con colores de su tipo, no reaparecen y entregan una recompensa:
-
-| Planeta | Recompensa |
-| --- | --- |
-| Rocoso | Experiencia |
-| Gaseoso | Mejora temporal aleatoria |
-| Núcleo | Sube de nivel un arma que ya se tiene |
-| Droide | 70% de probabilidad de desbloquear un arma nueva; si no, mejora una existente |
-
-Nunca se entregan recompensas imposibles: si todas las armas están al máximo, se entrega experiencia.
-
-Durante la partida, Núcleo y Droide son planetas jefe de gran tamaño: Droide usa un radio procedural de 16 a 22 unidades y Núcleo de 20 a 26. Su vida escala según el nivel y el tiempo. Ambos disparan rayos verdes e invocan naves con un límite independiente: Droide ataca e invoca con mayor frecuencia y admite hasta 6 naves; Núcleo tiene más vida, genera grupos de 3 y admite hasta 12. Al entrar en su radio de combate, el HUD mantiene visible la vida del jefe sin exigir que esté bajo el crosshair. Al destruirlos restauran hasta 20 puntos de vida, dejan dos recompensas de su tipo y experiencia adicional, y cesan de inmediato sus disparos e invocaciones. Esta lógica vive en `src/game/boss_planets.rs` y no altera sus versiones del menú.
-
-## Mejoras temporales
-
-Duran 20 segundos, se acumulan hasta 3 veces (+25% por nivel) y se muestran en el HUD con su tiempo restante: velocidad de la nave, daño, cadencia, velocidad de proyectiles y escudo de invulnerabilidad.
-
-## Subida de nivel y ruleta
-
-Destruir enemigos y planetas da experiencia. Al subir de nivel se pausa la partida y se abre una ruleta que revela tres opciones: desbloquear un arma, subirla de nivel, aumentar la vida máxima, reparar la nave o activar un escudo. Si se ganan varios niveles a la vez, las ruletas se encolan.
-
-| Tecla | Acción en la ruleta |
-| --- | --- |
-| `A` / `D` o flechas | Cambiar de opción |
-| `Enter` | Confirmar |
-| `1` a `3` | Elegir directamente |
-
-## Finales
-
-- **Nave destruida:** la nave explota y, tras una breve pausa, aparece la pantalla de resultados.
-- **Colapso solar (minuto 15):** el Sol se contrae, aparece un agujero negro que distorsiona y oscurece la imagen con un disco de acreción, los controles se bloquean poco a poco y la nave es absorbida.
-
-La pantalla de resultados muestra tiempo sobrevivido, nivel, enemigos y planetas destruidos, armas obtenidas y semilla. `Enter` vuelve al menú y `R` reintenta con la misma semilla.
-
-## Sonido
-
-Todos los efectos se generan por código como ondas (sin archivos de audio): disparos, láser, impactos, explosiones, destrucción de planetas, subida de nivel, ruleta, daño, alarma del último minuto y colapso. Código: `src/platform/audio.rs`.
-
-La música de fondo también se sintetiza por código, con una composición original de estilo épico espacial: metales, cuerdas, timbales y campanas con eco. No reproduce ninguna melodía existente. Hay tres pistas:
-
-- **Intro (56 s, una sola vez):** sigue los tiempos del texto de apertura. Calma hasta que aparece el título, fanfarria de metales en Re mayor con redoble de timbales, tema pensativo de corno mientras sube el texto y un final que crece durante el viaje de cámara.
-- **Menú (64 s, en bucle):** tema lento y misterioso en Re menor, con corno solista, cuerdas y campanas.
-- **Partida (64 s, en bucle):** marcha en Sol menor a 120 pulsos por minuto que crece en cuatro secciones (ostinato, tema, variación y final con toda la orquesta).
-
-Si existe `assets/music/intro.ogg`, la intro reproduce ese archivo una sola vez en lugar de la fanfarria generada. Si falta o no se puede abrir, suena la fanfarria original.
-
-Al cambiar de pista (intro, menú y partida) la música se funde. Código: `src/platform/music.rs`.
-
-## Características de la rúbrica y dónde se ven
-
-| Característica | Dónde se ve | Código |
-| --- | --- | --- |
-| Sistema solar con 7 cuerpos (Sol, Vulcano, Núcleo, Rocoso, Gaseoso, Droide y Luna) | Vista inicial | `src/world/solar_system.rs` |
-| Órbitas en el tiempo, con inclinación, excentricidad y rotación propia; luna que orbita un planeta | Órbitas punteadas violeta; la Luna gira alrededor de Gaseoso | `src/world/orbit.rs` |
-| Cinturón de asteroides procedural con semilla fija | Entre Rocoso y Gaseoso | `src/world/generation.rs` |
-| Objetos sobre la superficie orientados por la normal y que giran con el planeta | Cristales y rocas en Rocoso y en la Luna | `src/world/generation.rs` |
-| Nave que sigue a la cámara | Nave abajo al centro, vista desde atrás y arriba | `src/game/mod.rs` |
-| Movimiento 3D con inercia | `W`, `S`, `A`, `D`, flechas, `Q`, `E`, `Espacio`, `Ctrl`, `Shift` | `src/game/player.rs` |
-| Modo órbita local | `O` cerca de un planeta | `src/game/player.rs` |
-| Colisiones de nave y cámara contra el Sol, planetas, luna y asteroides | Intentar atravesar un cuerpo | `src/engine/collision.rs` |
-| Gravedad de cada cuerpo que desvía la trayectoria de la nave | Pasar cerca de un planeta sin acelerar; `G` la apaga para comparar | `src/engine/gravity.rs`, `src/game/mod.rs` |
-| Mapeo de normales procedural con tangentes por triángulo | Relieve en asteroides y planeta rocoso | `src/renderer/normal_map.rs`, `src/renderer/pipeline.rs` |
-| Warp animado hacia un destino que se mueve | `1` a `5` o `Tab`, luego `F` | `src/game/warp.rs` |
-| Acercamiento y alejamiento sin pantallas de carga | Volar hacia cualquier planeta | Todo ocurre en la misma escena |
-| HUD, mira y panel de controles | Barra inferior, `+` al centro, `H` | `src/game/hud.rs` |
-| Planetas destructibles con recompensas por tipo | Disparar a un planeta de la partida | `src/game/run_world.rs`, `src/game/upgrades.rs` |
-| Seis armas con niveles e inventario | HUD inferior derecho | `src/game/weapons/` |
-| Agujero negro con distorsión radial del framebuffer | Minuto 15 de la partida | `src/renderer/black_hole.rs` |
-| Paso fijo de simulación de 1/60 s | Todo el movimiento | `src/app.rs`, `src/platform/time.rs` |
-| Cargador OBJ propio y mallas compartidas | Todos los modelos | `src/assets/` |
-
-## Recorrido sugerido para la demostración
-
-1. Al iniciar, explorar el sistema ampliado del menú y acercarse a un planeta para activar su órbita automática.
-2. Salir de la órbita con una nueva orden de movimiento y volar dentro del Sol para iniciar el juego.
-3. Tras el destello blanco, comprobar que el sistema del menú desaparece y solo permanece el Sol.
-4. Verificar que el reloj de 15 minutos aparece centrado en la parte superior.
-5. Alejarse con turbo para observar el seguimiento gradual del Sol.
-
-## Integrantes
-
-- Pendiente
-- Pendiente
+Los cristales, las rocas, los asteroides y la Luna son geometría generada por código.
 
 ## Contribuciones
 
-- Pendiente
+- **Diana Sosa:** mapeo de normales, gravedad, intro, fondo espacial, planetas destructibles, recompensas, ruleta, finales, sonido, enemigos élite y pruebas de rendimiento.
+- **Adrián Penagos:** carga de modelos, shaders de los planetas, naves, menú solar, ciclo del Sol, sistema de partida con semilla, enemigos, armas y escenario procedural.
+- **Biancka Raxón:** transformaciones, escena, colisiones, sistema solar con órbitas, cinturón y superficie procedural, nave con inercia, órbita local, warp, HUD, música y README.
 
-## Uso de herramientas de apoyo
+## Recursos externos y asistencia de IA
 
-- Pendiente
+- `raylib` 6.0: ventana, entrada, presentación del framebuffer y audio. No participa en el dibujo 3D.
+- `assets/music/intro.ogg`: música de la intro, tomada de <https://youtu.be/h5psCjg5-cI>.
+- El equipo usó Claude Code (Anthropic) y Codex (OpenAI) como apoyo para redactar, revisar y depurar partes del código y de esta documentación. 
