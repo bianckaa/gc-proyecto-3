@@ -4,7 +4,16 @@ use crate::game::session::RUN_DURATION_SECONDS;
 const FOLLOW_DEAD_ZONE: f32 = 300.0;
 const FOLLOW_RESPONSE: f32 = 0.12;
 const MAX_FOLLOW_SPEED: f32 = 48.0;
-const MAX_RADIUS_MULTIPLIER: f32 = 2.4;
+pub const FIRST_GROWTH_MARK: f32 = 5.0 * 60.0;
+pub const FINAL_PHASE_START: f32 = 10.0 * 60.0;
+const FINAL_RADIUS_MULTIPLIER: f32 = 3.0;
+const MAX_INSTABILITY_OFFSET: f32 = 18.0;
+const COLLAPSE_MIN_SUN: f32 = 0.08;
+
+fn smoothstep(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * (3.0 - 2.0 * value)
+}
 
 pub fn follow_offset(sun: Vec3, player: Vec3, delta_time: f32) -> Vec3 {
     if !delta_time.is_finite() || delta_time <= 0.0 {
@@ -23,9 +32,62 @@ pub fn follow_offset(sun: Vec3, player: Vec3, delta_time: f32) -> Vec3 {
 }
 
 pub fn radius_multiplier(elapsed: f32) -> f32 {
-    let progress = (elapsed / RUN_DURATION_SECONDS).clamp(0.0, 1.0);
-    let growth = 0.65 * progress + 0.75 * progress.powi(4);
-    (1.0 + growth).min(MAX_RADIUS_MULTIPLIER)
+    let elapsed = elapsed.clamp(0.0, RUN_DURATION_SECONDS);
+    if elapsed <= FIRST_GROWTH_MARK {
+        1.0 + elapsed / FIRST_GROWTH_MARK
+    } else if elapsed <= FINAL_PHASE_START {
+        2.0 + (elapsed - FIRST_GROWTH_MARK) / (FINAL_PHASE_START - FIRST_GROWTH_MARK)
+    } else {
+        FINAL_RADIUS_MULTIPLIER
+    }
+}
+
+pub fn instability(elapsed: f32) -> f32 {
+    if elapsed <= FIRST_GROWTH_MARK {
+        return 0.0;
+    }
+    if elapsed < FINAL_PHASE_START {
+        let buildup = (elapsed - FIRST_GROWTH_MARK) / (FINAL_PHASE_START - FIRST_GROWTH_MARK);
+        return smoothstep(buildup) * 0.35;
+    }
+    let final_phase = (elapsed - FINAL_PHASE_START) / (RUN_DURATION_SECONDS - FINAL_PHASE_START);
+    0.35 + smoothstep(final_phase) * 0.65
+}
+
+pub fn blue_shift(elapsed: f32) -> f32 {
+    smoothstep((elapsed - FINAL_PHASE_START) / (RUN_DURATION_SECONDS - FINAL_PHASE_START))
+}
+
+pub fn collapse_contraction(progress: f32) -> f32 {
+    let shrink = (progress.clamp(0.0, 1.0) / 0.55).clamp(0.0, 1.0);
+    1.0 - (1.0 - COLLAPSE_MIN_SUN) * smoothstep(shrink)
+}
+
+pub fn black_hole_intensity(progress: f32) -> f32 {
+    smoothstep((progress.clamp(0.0, 1.0) - 0.15) / 0.6)
+}
+
+pub fn collapse_blackout(progress: f32) -> f32 {
+    smoothstep((progress.clamp(0.0, 1.0) - 0.68) / 0.32)
+}
+
+pub fn visual_pulse(elapsed: f32, time: f32) -> f32 {
+    let instability = instability(elapsed);
+    let pulse = (time * 2.7).sin() * 0.026
+        + (time * 7.1 + 0.8).sin() * 0.013
+        + (time * 13.3 + 2.1).sin() * 0.006;
+    1.0 + pulse * instability
+}
+
+pub fn instability_offset(elapsed: f32, time: f32) -> Vec3 {
+    let amount = instability(elapsed).powf(1.25) * MAX_INSTABILITY_OFFSET;
+    if amount <= f32::EPSILON {
+        return Vec3::default();
+    }
+    let x = (time * 1.31).sin() * 0.68 + (time * 4.73 + 0.4).sin() * 0.32;
+    let y = (time * 1.79 + 1.2).sin() * 0.62 + (time * 5.41).sin() * 0.38;
+    let z = (time * 1.07 + 2.4).sin() * 0.72 + (time * 3.97 + 0.9).sin() * 0.28;
+    Vec3::new(x, y, z) * amount
 }
 
 #[cfg(test)]
@@ -83,15 +145,44 @@ mod tests {
     }
 
     #[test]
-    fn growth_is_slow_first_and_accelerates_near_collapse() {
+    fn growth_hits_the_five_and_ten_minute_targets() {
         let start = radius_multiplier(0.0);
-        let middle = radius_multiplier(RUN_DURATION_SECONDS * 0.5);
-        let late = radius_multiplier(RUN_DURATION_SECONDS * 0.9);
+        let five_minutes = radius_multiplier(FIRST_GROWTH_MARK);
+        let ten_minutes = radius_multiplier(FINAL_PHASE_START);
         let end = radius_multiplier(RUN_DURATION_SECONDS);
 
         assert_eq!(start, 1.0);
-        assert!(middle > start);
-        assert!(late - middle > middle - start);
-        assert!((end - MAX_RADIUS_MULTIPLIER).abs() < 1e-5);
+        assert_eq!(five_minutes, 2.0);
+        assert_eq!(ten_minutes, 3.0);
+        assert_eq!(end, 3.0);
+    }
+
+    #[test]
+    fn final_phase_turns_blue_and_becomes_increasingly_unstable() {
+        assert_eq!(blue_shift(FINAL_PHASE_START), 0.0);
+        assert_eq!(blue_shift(RUN_DURATION_SECONDS), 1.0);
+        assert_eq!(instability(FIRST_GROWTH_MARK), 0.0);
+        assert!(instability(FINAL_PHASE_START) > 0.3);
+        assert_eq!(instability(RUN_DURATION_SECONDS), 1.0);
+        assert_eq!(instability_offset(FIRST_GROWTH_MARK, 10.0), Vec3::default());
+        assert!(instability_offset(RUN_DURATION_SECONDS, 10.0).length() > 1.0);
+    }
+
+    #[test]
+    fn visual_pulse_stays_bounded_around_the_physical_radius() {
+        for step in 0..600 {
+            let pulse = visual_pulse(RUN_DURATION_SECONDS, step as f32 / 60.0);
+            assert!((0.94..=1.06).contains(&pulse));
+        }
+    }
+
+    #[test]
+    fn collapse_contracts_into_a_black_hole_and_finishes_in_black() {
+        assert_eq!(collapse_contraction(0.0), 1.0);
+        assert!((collapse_contraction(1.0) - COLLAPSE_MIN_SUN).abs() < 1e-6);
+        assert_eq!(black_hole_intensity(0.0), 0.0);
+        assert_eq!(black_hole_intensity(1.0), 1.0);
+        assert_eq!(collapse_blackout(0.68), 0.0);
+        assert_eq!(collapse_blackout(1.0), 1.0);
     }
 }

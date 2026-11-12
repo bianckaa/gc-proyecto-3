@@ -6,8 +6,8 @@ use crate::game::hud::draw_hud;
 use crate::game::{Game, ProgramMode};
 use crate::platform::audio::Audio;
 use crate::platform::image_file::{load_raster, ENDING_IMAGE_FILE};
-use crate::platform::music::MusicTrack;
 use crate::platform::input::{InputState, Key};
+use crate::platform::music::MusicTrack;
 use crate::platform::time::{Clock, FixedTimestep};
 use crate::platform::window::Window;
 use crate::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -54,9 +54,7 @@ impl App {
             clock: Clock::start(),
             timestep: FixedTimestep::new(SIMULATION_STEP, MAX_STEPS_PER_FRAME),
             simulation_time: 0.0,
-            opening: Some(
-                OpeningCrawl::new().with_ending_image(load_raster(ENDING_IMAGE_FILE)),
-            ),
+            opening: Some(OpeningCrawl::new().with_ending_image(load_raster(ENDING_IMAGE_FILE))),
             audio: Audio::open(),
         }
     }
@@ -152,6 +150,8 @@ impl App {
             labels.extend(self.game.draw_overlays(&mut self.renderer));
             labels
         };
+        self.renderer
+            .tint_screen(Color::BLACK, self.game.solar_blackout());
         self.renderer.fade_to_white(flash);
         self.window.present(self.renderer.pixels(), &labels);
     }

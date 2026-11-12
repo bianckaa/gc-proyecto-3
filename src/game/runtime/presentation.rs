@@ -2,12 +2,24 @@ use super::super::*;
 
 impl Game {
     pub fn black_hole(&self) -> (Vec3, f32) {
-        let progress = self.collapse_progress();
-        let intensity = ((progress - 0.15) / 0.6).clamp(0.0, 1.0);
         (
             self.system.sun_position(),
-            intensity * intensity * (3.0 - 2.0 * intensity),
+            black_hole_intensity(self.collapse_progress()),
         )
+    }
+
+    pub fn solar_blackout(&self) -> f32 {
+        if self.program_mode != ProgramMode::Game {
+            return 0.0;
+        }
+        if self
+            .summary
+            .as_ref()
+            .is_some_and(|summary| summary.cause == "EL SOL COLAPSO")
+        {
+            return 1.0;
+        }
+        collapse_blackout(self.collapse_progress())
     }
 
     pub fn damage_flash(&self) -> (Color, f32) {

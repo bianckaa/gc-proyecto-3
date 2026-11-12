@@ -135,6 +135,22 @@ fn death_shows_results_and_enter_returns_to_menu() {
 }
 
 #[test]
+fn gameplay_sun_reaches_double_and_triple_its_initial_radius() {
+    let (mut game, mut camera) = test_game();
+    game.configure_mode(ProgramMode::Game, &mut camera);
+    let initial = game.sun_base_radius;
+
+    game.session.update(sun_lifecycle::FIRST_GROWTH_MARK);
+    game.update_sun_lifecycle(1.0 / 60.0);
+    assert!((game.system.body(0).radius - initial * 2.0).abs() < 1e-4);
+
+    game.session
+        .update(sun_lifecycle::FINAL_PHASE_START - sun_lifecycle::FIRST_GROWTH_MARK);
+    game.update_sun_lifecycle(1.0 / 60.0);
+    assert!((game.system.body(0).radius - initial * 3.0).abs() < 1e-4);
+}
+
+#[test]
 fn solar_collapse_grows_a_black_hole_and_ends_the_run() {
     let (mut game, mut camera) = test_game();
     game.configure_mode(ProgramMode::Game, &mut camera);
@@ -153,6 +169,9 @@ fn solar_collapse_grows_a_black_hole_and_ends_the_run() {
     }
     assert_eq!(game.session.state(), RunState::Summary);
     assert_eq!(game.summary().unwrap().cause, "EL SOL COLAPSO");
+    assert_eq!(game.solar_blackout(), 1.0);
+    game.configure_mode(ProgramMode::Menu, &mut camera);
+    assert_eq!(game.solar_blackout(), 0.0);
 }
 
 #[test]

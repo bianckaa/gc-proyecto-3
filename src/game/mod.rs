@@ -51,7 +51,10 @@ use run_world::{DestroyedPlanet, PlanetKind, RunWorld};
 use runtime::setup::{apply_run_seed, load_models, patrols, surfaces};
 use session::{generate_seed, RunSession, RunState};
 use std::f32::consts::PI;
-use sun_lifecycle::{follow_offset, radius_multiplier};
+use sun_lifecycle::{
+    black_hole_intensity, blue_shift, collapse_blackout, collapse_contraction, follow_offset,
+    instability, instability_offset, radius_multiplier, visual_pulse,
+};
 use upgrades::{apply_option, planet_reward, upgrade_options, Reward};
 use warp::{Destination, Warp, WarpEvent, WarpState};
 use wave_director::WaveDirector;
@@ -119,7 +122,6 @@ const ROCKY_DEBRIS: usize = 7;
 const ROCKY_DEBRIS_COLOR: Color = Color::new(217, 194, 154);
 const COLLAPSE_DURATION: f32 = 8.0;
 const COLLAPSE_PULL: f32 = 40.0;
-const COLLAPSE_MIN_SUN: f32 = 0.08;
 const DAMAGE_FLASH_DURATION: f32 = 0.35;
 const DAMAGE_FLASH_STRENGTH: f32 = 0.45;
 const INVULNERABILITY_DURATION: f32 = 0.75;
@@ -255,6 +257,7 @@ pub struct Game {
     next_run_seed: u32,
     seed_input: Option<String>,
     sun_base_radius: f32,
+    sun_instability_offset: Vec3,
     pub gravity_enabled: bool,
     asteroids: Vec<Asteroid>,
     surfaces: Vec<Surface>,
@@ -329,6 +332,7 @@ impl Game {
             next_run_seed: generate_seed(),
             seed_input: None,
             sun_base_radius,
+            sun_instability_offset: Vec3::default(),
             gravity_enabled: true,
             asteroids,
             surfaces,
@@ -447,6 +451,7 @@ impl Game {
         }
         self.seed_input = None;
         self.sun_base_radius = config.bodies[0].radius;
+        self.sun_instability_offset = Vec3::default();
         self.system = SolarSystem::new(config);
         self.asteroids = asteroid_belt(&self.system.config.belt);
         self.surfaces = surfaces(&self.system);
@@ -790,13 +795,16 @@ impl Game {
         if self.program_mode != ProgramMode::Game {
             return;
         }
-        if self.session.state() == RunState::Playing {
-            let offset = follow_offset(self.system.sun_position(), self.ship.position, delta_time);
-            self.system.translate_origin(offset);
-        }
-        let progress = self.collapse_progress();
-        let shrink = (progress / 0.55).clamp(0.0, 1.0);
-        let contraction = 1.0 - (1.0 - COLLAPSE_MIN_SUN) * shrink * shrink * (3.0 - 2.0 * shrink);
+        let follow = if self.session.state() == RunState::Playing {
+            follow_offset(self.system.sun_position(), self.ship.position, delta_time)
+        } else {
+            Vec3::default()
+        };
+        let target_instability = instability_offset(self.session.elapsed(), self.time);
+        let instability_delta = target_instability - self.sun_instability_offset;
+        self.system.translate_origin(follow + instability_delta);
+        self.sun_instability_offset = target_instability;
+        let contraction = collapse_contraction(self.collapse_progress());
         self.system.config.bodies[0].radius =
             self.sun_base_radius * radius_multiplier(self.session.elapsed()) * contraction;
     }

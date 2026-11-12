@@ -11,13 +11,26 @@ impl Game {
                 Model::Lod(handle) => assets.lod_bounding_radius(handle),
                 Model::Mesh(handle) => assets.mesh_bounding_radius(handle),
             };
+            let mut material = body.material;
+            let mut render_radius = body.radius;
+            if index == 0 && self.program_mode == ProgramMode::Game {
+                let elapsed = self.session.elapsed();
+                let instability = instability(elapsed);
+                let blue = blue_shift(elapsed);
+                let blue_star = Vec3::new(0.16, 0.52, 1.0);
+                material.base_color = material.base_color * (1.0 - blue) + blue_star * blue;
+                material.emissive = material.emissive
+                    + Vec3::new(0.015, 0.055, 0.18) * instability
+                    + Vec3::new(0.0, 0.035, 0.12) * blue;
+                render_radius *= visual_pulse(elapsed, self.time);
+            }
             scene.push(Entity {
                 model,
-                material: body.material,
+                material,
                 transform: Transform::new(state.position)
                     .with_rotation(state.rotation)
-                    .with_uniform_scale(body.radius),
-                radius: body.radius * unit_radius.max(1.0),
+                    .with_uniform_scale(render_radius),
+                radius: render_radius * unit_radius.max(1.0),
             });
         }
 

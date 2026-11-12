@@ -2,16 +2,18 @@ use super::framebuffer::{Color, Framebuffer};
 use crate::engine::math::{Mat4, Vec3};
 
 const BYTES_PER_PIXEL: usize = 4;
-const MAX_HORIZON_PIXELS: f32 = 46.0;
-const SWIRL: f32 = 1.4;
-const LENS: f32 = 0.9;
+const MAX_HORIZON_PIXELS: f32 = 68.0;
+const SWIRL: f32 = 1.85;
+const LENS: f32 = 1.2;
 const RING_INNER: f32 = 1.05;
-const RING_OUTER: f32 = 1.7;
-const RING_ARMS: f32 = 6.0;
-const RING_SPEED: f32 = 3.0;
-const MAX_DARKENING: f32 = 0.55;
-const RING_COLOR: Vec3 = Vec3::new(1.0, 0.55, 0.15);
-const RING_HOT: Vec3 = Vec3::new(1.0, 0.92, 0.7);
+const RING_OUTER: f32 = 1.9;
+const HALO_OUTER: f32 = 2.8;
+const RING_ARMS: f32 = 7.0;
+const RING_SPEED: f32 = 4.2;
+const MAX_DARKENING: f32 = 0.84;
+const CHROMATIC_SHIFT: f32 = 2.4;
+const RING_COLOR: Vec3 = Vec3::new(0.12, 0.48, 1.0);
+const RING_HOT: Vec3 = Vec3::new(0.78, 0.94, 1.0);
 
 pub struct BlackHoleEffect {
     pub intensity: f32,
@@ -51,7 +53,11 @@ impl BlackHoleEffect {
         } else {
             height as f32 * 0.5
         };
-        let horizon = if visible { self.horizon_radius() } else { 0.0 };
+        let horizon = if visible {
+            self.horizon_radius() * (0.96 + 0.04 * (time * 5.3).sin())
+        } else {
+            0.0
+        };
 
         self.source.clear();
         self.source.extend_from_slice(framebuffer.pixels());
@@ -82,7 +88,21 @@ impl BlackHoleEffect {
                 let scale = 1.0 + LENS * pull;
                 let source_x = center_x + (dx * cos - dy * sin) * scale;
                 let source_y = center_y + (dx * sin + dy * cos) * scale;
-                let mut color = sample(source_x as i32, source_y as i32) * darkening;
+                let radial_x = dx / radius;
+                let radial_y = dy / radius;
+                let fringe = CHROMATIC_SHIFT * pull * intensity;
+                let base = sample(source_x as i32, source_y as i32);
+                let red = sample(
+                    (source_x + radial_x * fringe) as i32,
+                    (source_y + radial_y * fringe) as i32,
+                )
+                .x;
+                let blue = sample(
+                    (source_x - radial_x * fringe) as i32,
+                    (source_y - radial_y * fringe) as i32,
+                )
+                .z;
+                let mut color = Vec3::new(red, base.y, blue) * darkening;
                 let ring = radius / horizon.max(0.001);
                 if horizon > 0.0 && (RING_INNER..RING_OUTER).contains(&ring) {
                     let middle = (RING_INNER + RING_OUTER) * 0.5;
@@ -91,6 +111,10 @@ impl BlackHoleEffect {
                     let glow = falloff * (0.55 + 0.45 * swirl.sin()) * intensity;
                     let tint = RING_COLOR + (RING_HOT - RING_COLOR) * falloff;
                     color = color + tint * glow;
+                } else if horizon > 0.0 && (RING_OUTER..HALO_OUTER).contains(&ring) {
+                    let halo = 1.0 - (ring - RING_OUTER) / (HALO_OUTER - RING_OUTER);
+                    let shimmer = 0.65 + 0.35 * (dy.atan2(dx) * 4.0 - time * 2.3).sin();
+                    color = color + RING_COLOR * (halo * halo * shimmer * intensity * 0.22);
                 }
                 framebuffer.set_pixel(x, y, Color::from_unit(color));
             }
