@@ -44,6 +44,15 @@ fn orbit_mode_keeps_altitude_while_the_planet_moves() {
     let mut center = Vec3::new(30.0, 0.0, 0.0);
     let mut ship = Ship::new(center + Vec3::new(0.0, 0.0, 9.0), Vec3::new(1.0, 0.0, 0.0));
     ship.enter_orbit(0, center, 3.0);
+    ship.update_orbit(
+        &ShipControls::default(),
+        center,
+        Vec3::default(),
+        3.0,
+        3.0,
+        1.0 / 60.0,
+    );
+    assert!(ship.orbit_transition() > 0.0 && ship.orbit_transition() < 1.0);
     for _ in 0..300 {
         let displacement = Vec3::new(0.0, 0.0, 0.05);
         center = center + displacement;
@@ -51,6 +60,7 @@ fn orbit_mode_keeps_altitude_while_the_planet_moves() {
             &ShipControls::default(),
             center,
             displacement,
+            3.0,
             3.0,
             1.0 / 60.0,
         );
@@ -60,6 +70,115 @@ fn orbit_mode_keeps_altitude_while_the_planet_moves() {
     ship.leave_orbit();
     assert!(!ship.is_orbiting());
     assert!(ship.speed() > 0.0);
+}
+
+#[test]
+fn orbit_controls_rotate_zoom_and_release_the_ship() {
+    let center = Vec3::default();
+    let radius = 3.0;
+    let mut ship = Ship::new(Vec3::new(0.0, 2.0, 7.0), Vec3::new(1.0, 0.0, 0.0));
+    ship.enter_orbit(0, center, radius);
+    for _ in 0..120 {
+        ship.update_orbit(
+            &ShipControls::default(),
+            center,
+            Vec3::default(),
+            radius,
+            radius,
+            1.0 / 60.0,
+        );
+    }
+
+    let before_rotation = ship.position;
+    for _ in 0..60 {
+        ship.update_orbit(
+            &ShipControls {
+                yaw: 1.0,
+                ..ShipControls::default()
+            },
+            center,
+            Vec3::default(),
+            radius,
+            radius,
+            1.0 / 60.0,
+        );
+    }
+    assert!((ship.position - before_rotation).length() > 1.0);
+    assert!((ship.position.y - 2.0).abs() < 1e-3);
+    assert!(ship.up().dot(Vec3::new(0.0, 1.0, 0.0)) > 0.99);
+
+    let before_zoom = ship.position.length();
+    for _ in 0..30 {
+        ship.update_orbit(
+            &ShipControls {
+                thrust: 1.0,
+                ..ShipControls::default()
+            },
+            center,
+            Vec3::default(),
+            radius,
+            radius,
+            1.0 / 60.0,
+        );
+    }
+    assert!(ship.position.length() < before_zoom);
+
+    let mut released = false;
+    for _ in 0..180 {
+        released = ship.update_orbit(
+            &ShipControls {
+                thrust: -1.0,
+                ..ShipControls::default()
+            },
+            center,
+            Vec3::default(),
+            radius,
+            radius,
+            1.0 / 60.0,
+        );
+        if released {
+            break;
+        }
+    }
+    assert!(released);
+    assert!(!ship.is_orbiting());
+    assert!(ship.velocity.dot(ship.position.normalize()) > 0.0);
+}
+
+#[test]
+fn orbit_capture_requires_getting_close_to_the_planet() {
+    assert!(Ship::can_orbit(8.0, 3.0));
+    assert!(!Ship::can_orbit(9.0, 3.0));
+}
+
+#[test]
+fn enlarged_body_releases_using_its_smaller_capture_radius() {
+    let center = Vec3::default();
+    let visual_radius = 18.0;
+    let capture_radius = 12.0;
+    let mut ship = Ship::new(Vec3::new(0.0, 0.0, 27.0), Vec3::new(1.0, 0.0, 0.0));
+    ship.enter_orbit(0, center, visual_radius);
+
+    let mut released = false;
+    for _ in 0..90 {
+        released = ship.update_orbit(
+            &ShipControls {
+                thrust: -1.0,
+                ..ShipControls::default()
+            },
+            center,
+            Vec3::default(),
+            visual_radius,
+            capture_radius,
+            1.0 / 60.0,
+        );
+        if released {
+            break;
+        }
+    }
+
+    assert!(released);
+    assert!(ship.position.length() < 40.0);
 }
 
 #[test]

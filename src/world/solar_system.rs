@@ -32,6 +32,7 @@ pub struct BodyConfig {
     pub model: BodyModel,
     pub material: Material,
     pub radius: f32,
+    pub orbit_capture_radius: f32,
     pub collision_scale: f32,
     pub flattening: f32,
     pub parent: Option<usize>,
@@ -58,6 +59,7 @@ pub struct BodyState {
 pub struct SolarSystem {
     pub config: SystemConfig,
     orbital_time: f32,
+    origin: Vec3,
     states: Vec<BodyState>,
     previous_positions: Vec<Vec3>,
 }
@@ -68,6 +70,7 @@ const fn material(base_color: Vec3, emissive: Vec3, shader: ShaderKind, outline:
         emissive,
         shader,
         outline,
+        opacity: 1.0,
     }
 }
 
@@ -86,6 +89,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 7.0,
+                    orbit_capture_radius: 7.0,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: None,
@@ -103,6 +107,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 1.6,
+                    orbit_capture_radius: 1.6,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -120,6 +125,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 2.8,
+                    orbit_capture_radius: 2.8,
                     collision_scale: 0.78,
                     flattening: 1.0,
                     parent: Some(0),
@@ -139,6 +145,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 3.2,
+                    orbit_capture_radius: 3.2,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -162,9 +169,10 @@ impl SystemConfig {
                         Vec3::new(0.20, 0.46, 0.72),
                         Vec3::new(0.0, 0.015, 0.025),
                         ShaderKind::GasPlanet,
-                        false,
+                        true,
                     ),
                     radius: 4.6,
+                    orbit_capture_radius: 4.6,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(0),
@@ -182,6 +190,7 @@ impl SystemConfig {
                         true,
                     ),
                     radius: 6.0,
+                    orbit_capture_radius: 6.0,
                     collision_scale: 0.95,
                     flattening: 0.36,
                     parent: Some(0),
@@ -192,8 +201,14 @@ impl SystemConfig {
                 BodyConfig {
                     name: "LUNA",
                     model: BodyModel::Sphere,
-                    material: material(Vec3::new(0.25, 0.75, 1.0), none, ShaderKind::Toon, true),
+                    material: Material {
+                        // Comparte la cobertura screen-door del gaseoso sin
+                        // convertir el resto de materiales Toon en transparentes.
+                        opacity: 0.85,
+                        ..material(Vec3::new(0.25, 0.75, 1.0), none, ShaderKind::Toon, true)
+                    },
                     radius: 1.0,
+                    orbit_capture_radius: 1.0,
                     collision_scale: 1.0,
                     flattening: 1.0,
                     parent: Some(4),
@@ -225,6 +240,49 @@ impl SystemConfig {
             light_ambient: 0.16,
         }
     }
+
+    /// Builds the more spacious solar system used by the interactive menu.
+    /// The game keeps the original proportions, while the menu favors
+    /// readability and gives the ship more room to explore each body.
+    pub fn menu() -> Self {
+        const ORBIT_SCALE: f32 = 3.0;
+        const BODY_SCALE: f32 = 2.0;
+        const FEATURED_BODY_SCALE: f32 = 1.5;
+
+        let mut config = Self::standard();
+        for body in &mut config.bodies {
+            body.radius *= BODY_SCALE;
+            body.orbit_capture_radius *= BODY_SCALE;
+            body.orbit.radius *= ORBIT_SCALE;
+            if let Some(surface) = &mut body.surface {
+                surface.min_scale *= BODY_SCALE;
+                surface.max_scale *= BODY_SCALE;
+            }
+            if matches!(body.name, "NUCLEO" | "DROIDE") {
+                body.radius *= FEATURED_BODY_SCALE;
+            }
+        }
+        config.belt.inner_radius *= ORBIT_SCALE;
+        config.belt.outer_radius *= ORBIT_SCALE;
+        config.belt.thickness *= BODY_SCALE;
+        config.belt.min_size *= BODY_SCALE;
+        config.belt.max_size *= BODY_SCALE;
+        config
+    }
+
+    /// Keeps only the central Sun for a run. Planets and other gameplay
+    /// content are supplied by the procedural run generator instead of the
+    /// fixed solar system used by the menu.
+    pub fn game() -> Self {
+        const GAME_SUN_SCALE: f32 = 5.0;
+
+        let mut config = Self::standard();
+        config.bodies.truncate(1);
+        config.bodies[0].radius *= GAME_SUN_SCALE;
+        config.bodies[0].orbit_capture_radius *= GAME_SUN_SCALE;
+        config.belt.count = 0;
+        config
+    }
 }
 
 impl SolarSystem {
@@ -233,6 +291,7 @@ impl SolarSystem {
         let mut system = Self {
             config,
             orbital_time: 0.0,
+            origin: Vec3::default(),
             states: vec![
                 BodyState {
                     position: Vec3::default(),
@@ -280,11 +339,21 @@ impl SolarSystem {
         self.config.bodies[index]
             .parent
             .filter(|&parent| parent < index)
-            .map_or(Vec3::default(), |parent| self.states[parent].position)
+            .map_or(self.origin, |parent| self.states[parent].position)
     }
 
     pub fn orbital_time(&self) -> f32 {
         self.orbital_time
+    }
+
+    pub fn origin(&self) -> Vec3 {
+        self.origin
+    }
+
+    /// Moves the system anchor. Positions are recomputed on the next update so
+    /// body displacement includes this translation for orbiting entities.
+    pub fn translate_origin(&mut self, offset: Vec3) {
+        self.origin = self.origin + offset;
     }
 
     pub fn body_count(&self) -> usize {

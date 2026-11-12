@@ -3,8 +3,11 @@ use crate::engine::camera::Camera;
 use crate::engine::math::Vec3;
 use crate::engine::scene::Scene;
 use crate::game::hud::draw_hud;
-use crate::game::Game;
+use crate::game::{Game, ProgramMode};
+use crate::platform::audio::Audio;
+use crate::platform::image_file::{load_raster, ENDING_IMAGE_FILE};
 use crate::platform::input::{InputState, Key};
+use crate::platform::music::MusicTrack;
 use crate::platform::time::{Clock, FixedTimestep};
 use crate::platform::window::Window;
 use crate::renderer::framebuffer::{Color, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -28,6 +31,7 @@ pub struct App {
     timestep: FixedTimestep,
     simulation_time: f32,
     opening: Option<OpeningCrawl>,
+    audio: Option<Audio>,
 }
 
 impl App {
@@ -50,7 +54,8 @@ impl App {
             clock: Clock::start(),
             timestep: FixedTimestep::new(SIMULATION_STEP, MAX_STEPS_PER_FRAME),
             simulation_time: 0.0,
-            opening: Some(OpeningCrawl::new()),
+            opening: Some(OpeningCrawl::new().with_ending_image(load_raster(ENDING_IMAGE_FILE))),
+            audio: Audio::open(),
         }
     }
 
@@ -62,6 +67,20 @@ impl App {
             for _ in 0..steps {
                 self.update(self.timestep.step());
                 self.input.consume_events();
+            }
+            if let Some(audio) = &mut self.audio {
+                audio.set_music(Some(if self.opening.is_some() {
+                    MusicTrack::Intro
+                } else {
+                    match self.game.program_mode {
+                        ProgramMode::Menu => MusicTrack::Menu,
+                        ProgramMode::Game => MusicTrack::Battle,
+                    }
+                }));
+                audio.update(frame_delta);
+                for effect in self.game.take_sounds() {
+                    audio.play(effect);
+                }
             }
             self.renderer.metrics.update(frame_delta);
             self.draw();
@@ -98,6 +117,13 @@ impl App {
         self.game.populate(&mut self.scene, &self.assets);
         self.game.queue_lines(&mut self.renderer);
         let objects = self.scene.render_objects(&self.assets);
+        let (black_hole_center, black_hole_intensity) = self.game.black_hole();
+        self.renderer.black_hole.center = black_hole_center;
+        self.renderer.black_hole.intensity = if self.opening.is_some() {
+            0.0
+        } else {
+            black_hole_intensity
+        };
         let camera = match &self.opening {
             Some(opening) => opening.camera(&self.camera),
             None => self.camera,
@@ -112,7 +138,21 @@ impl App {
         if self.game.show_metrics {
             self.renderer.draw_metrics(METRICS_COLOR);
         }
-        let labels = draw_hud(&mut self.renderer, &self.game.hud_info());
+        let (damage_color, damage_amount) = self.game.damage_flash();
+        self.renderer.tint_screen(damage_color, damage_amount);
+        let flash = self.game.transition_flash();
+        let labels = if flash > 0.0 {
+            Vec::new()
+        } else {
+            let crosshair = self.game.crosshair_screen_position(&camera);
+            let mut labels = draw_hud(&mut self.renderer, &self.game.hud_info(), crosshair);
+            labels.extend(self.game.damage_labels(&self.camera));
+            labels.extend(self.game.draw_overlays(&mut self.renderer));
+            labels
+        };
+        self.renderer
+            .tint_screen(Color::BLACK, self.game.solar_blackout());
+        self.renderer.fade_to_white(flash);
         self.window.present(self.renderer.pixels(), &labels);
     }
 }

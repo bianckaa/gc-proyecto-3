@@ -16,7 +16,11 @@ const PLACEHOLDER_SHIP_NAME: &str = "nave_temporal";
 const MODEL_KEY_PREFIX: &str = "modelo:";
 
 pub fn model_path(file_name: &str) -> Option<PathBuf> {
-    let relative = Path::new(MODELS_DIRECTORY).join(file_name);
+    asset_path(&Path::new(MODELS_DIRECTORY).join(file_name))
+}
+
+pub fn asset_path(relative: &Path) -> Option<PathBuf> {
+    let relative = relative.to_path_buf();
     let mut candidates = vec![relative.clone()];
     if let Ok(executable) = std::env::current_exe() {
         candidates.extend(

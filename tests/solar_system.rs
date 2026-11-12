@@ -35,6 +35,51 @@ fn standard_system_has_at_least_five_distinct_bodies() {
 }
 
 #[test]
+fn gas_moon_uses_eighty_five_percent_screen_door_coverage() {
+    let system = SolarSystem::new(SystemConfig::standard());
+    let moon = system.body(system.find("LUNA").unwrap());
+
+    assert!((moon.material.opacity - 0.85).abs() < f32::EPSILON);
+    assert!(moon.material.outline);
+}
+
+#[test]
+fn menu_system_makes_bodies_larger_and_orbits_more_spacious() {
+    let standard = SystemConfig::standard();
+    let menu = SystemConfig::menu();
+
+    for (standard_body, menu_body) in standard.bodies.iter().zip(&menu.bodies) {
+        assert!(menu_body.radius > standard_body.radius);
+        assert_eq!(menu_body.orbit_capture_radius, standard_body.radius * 2.0);
+        if matches!(menu_body.name, "NUCLEO" | "DROIDE") {
+            assert!(menu_body.radius > menu_body.orbit_capture_radius);
+        } else {
+            assert_eq!(menu_body.radius, menu_body.orbit_capture_radius);
+        }
+        if standard_body.parent.is_some() {
+            assert!(menu_body.orbit.radius > standard_body.orbit.radius);
+        }
+    }
+    assert!(menu.belt.inner_radius > standard.belt.inner_radius);
+    assert!(menu.belt.outer_radius > standard.belt.outer_radius);
+}
+
+#[test]
+fn game_system_keeps_only_the_central_sun() {
+    let standard = SystemConfig::standard();
+    let game = SystemConfig::game();
+
+    assert_eq!(game.bodies.len(), 1);
+    assert_eq!(game.bodies[0].name, "SOL");
+    assert_eq!(game.bodies[0].radius, standard.bodies[0].radius * 5.0);
+    assert_eq!(
+        game.bodies[0].orbit_capture_radius,
+        standard.bodies[0].orbit_capture_radius * 5.0
+    );
+    assert_eq!(game.belt.count, 0);
+}
+
+#[test]
 fn bodies_move_with_time_and_the_moon_follows_its_planet() {
     let mut system = SolarSystem::new(SystemConfig::standard());
     let moon = system.find("LUNA").unwrap();
@@ -47,6 +92,23 @@ fn bodies_move_with_time_and_the_moon_follows_its_planet() {
     }
     assert!((system.position(planet) - before).length() > 0.1);
     assert_eq!(system.sun_position(), Vec3::default());
+}
+
+#[test]
+fn translating_origin_moves_the_whole_system_together() {
+    let mut system = SolarSystem::new(SystemConfig::standard());
+    let before: Vec<_> = (0..system.body_count())
+        .map(|index| system.position(index))
+        .collect();
+    let translation = Vec3::new(12.0, -3.0, 8.0);
+
+    system.translate_origin(translation);
+    system.update(0.0);
+
+    for (index, old_position) in before.into_iter().enumerate() {
+        assert!((system.position(index) - old_position - translation).length() < 1e-4);
+    }
+    assert_eq!(system.sun_position(), translation);
 }
 
 #[test]

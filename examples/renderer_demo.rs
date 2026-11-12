@@ -217,6 +217,7 @@ fn material(base_color: Vec3, shader: ShaderKind) -> Material {
         emissive: Vec3::default(),
         shader,
         outline: true,
+        opacity: 1.0,
     }
 }
 

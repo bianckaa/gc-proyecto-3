@@ -13,6 +13,8 @@ pub enum Key {
     F,
     G,
     H,
+    I,
+    R,
     O,
     Tab,
     Space,
@@ -22,20 +24,26 @@ pub enum Key {
     Down,
     Left,
     Right,
+    Digit0,
     Digit1,
     Digit2,
     Digit3,
     Digit4,
     Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
     M,
     Minus,
     Equal,
-    Escape,
+    Backspace,
     Enter,
+    Escape,
 }
 
 impl Key {
-    pub const ALL: [Key; 29] = [
+    pub const ALL: [Key; 37] = [
         Key::W,
         Key::A,
         Key::S,
@@ -46,6 +54,8 @@ impl Key {
         Key::F,
         Key::G,
         Key::H,
+        Key::I,
+        Key::R,
         Key::O,
         Key::Tab,
         Key::Space,
@@ -55,16 +65,22 @@ impl Key {
         Key::Down,
         Key::Left,
         Key::Right,
+        Key::Digit0,
         Key::Digit1,
         Key::Digit2,
         Key::Digit3,
         Key::Digit4,
         Key::Digit5,
+        Key::Digit6,
+        Key::Digit7,
+        Key::Digit8,
+        Key::Digit9,
         Key::M,
         Key::Minus,
         Key::Equal,
-        Key::Escape,
+        Key::Backspace,
         Key::Enter,
+        Key::Escape,
     ];
 
     pub const DIGITS: [Key; 5] = [
@@ -73,6 +89,19 @@ impl Key {
         Key::Digit3,
         Key::Digit4,
         Key::Digit5,
+    ];
+
+    pub const NUMERIC_DIGITS: [Key; 10] = [
+        Key::Digit0,
+        Key::Digit1,
+        Key::Digit2,
+        Key::Digit3,
+        Key::Digit4,
+        Key::Digit5,
+        Key::Digit6,
+        Key::Digit7,
+        Key::Digit8,
+        Key::Digit9,
     ];
 
     fn raylib_key(self) -> KeyboardKey {
@@ -87,6 +116,8 @@ impl Key {
             Key::F => KeyboardKey::KEY_F,
             Key::G => KeyboardKey::KEY_G,
             Key::H => KeyboardKey::KEY_H,
+            Key::I => KeyboardKey::KEY_I,
+            Key::R => KeyboardKey::KEY_R,
             Key::O => KeyboardKey::KEY_O,
             Key::Tab => KeyboardKey::KEY_TAB,
             Key::Space => KeyboardKey::KEY_SPACE,
@@ -96,16 +127,22 @@ impl Key {
             Key::Down => KeyboardKey::KEY_DOWN,
             Key::Left => KeyboardKey::KEY_LEFT,
             Key::Right => KeyboardKey::KEY_RIGHT,
+            Key::Digit0 => KeyboardKey::KEY_ZERO,
             Key::Digit1 => KeyboardKey::KEY_ONE,
             Key::Digit2 => KeyboardKey::KEY_TWO,
             Key::Digit3 => KeyboardKey::KEY_THREE,
             Key::Digit4 => KeyboardKey::KEY_FOUR,
             Key::Digit5 => KeyboardKey::KEY_FIVE,
+            Key::Digit6 => KeyboardKey::KEY_SIX,
+            Key::Digit7 => KeyboardKey::KEY_SEVEN,
+            Key::Digit8 => KeyboardKey::KEY_EIGHT,
+            Key::Digit9 => KeyboardKey::KEY_NINE,
             Key::M => KeyboardKey::KEY_M,
             Key::Minus => KeyboardKey::KEY_MINUS,
             Key::Equal => KeyboardKey::KEY_EQUAL,
-            Key::Escape => KeyboardKey::KEY_ESCAPE,
+            Key::Backspace => KeyboardKey::KEY_BACKSPACE,
             Key::Enter => KeyboardKey::KEY_ENTER,
+            Key::Escape => KeyboardKey::KEY_ESCAPE,
         }
     }
 }
@@ -130,7 +167,7 @@ impl MouseButton {
 const KEY_COUNT: usize = Key::ALL.len();
 const MOUSE_BUTTON_COUNT: usize = MouseButton::ALL.len();
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct InputState {
     held_keys: [bool; KEY_COUNT],
     pressed_keys: [bool; KEY_COUNT],
@@ -138,6 +175,19 @@ pub struct InputState {
     pressed_buttons: [bool; MOUSE_BUTTON_COUNT],
     mouse_delta: Vec2,
     wheel: f32,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            held_keys: [false; KEY_COUNT],
+            pressed_keys: [false; KEY_COUNT],
+            held_buttons: [false; MOUSE_BUTTON_COUNT],
+            pressed_buttons: [false; MOUSE_BUTTON_COUNT],
+            mouse_delta: Vec2::default(),
+            wheel: 0.0,
+        }
+    }
 }
 
 impl InputState {
@@ -182,6 +232,13 @@ impl InputState {
 
     pub fn pressed_digit(&self) -> Option<usize> {
         Key::DIGITS.iter().position(|&key| self.was_pressed(key))
+    }
+
+    pub fn pressed_numeric_digit(&self) -> Option<u8> {
+        Key::NUMERIC_DIGITS
+            .iter()
+            .position(|&key| self.was_pressed(key))
+            .map(|digit| digit as u8)
     }
 
     pub fn is_button_held(&self, button: MouseButton) -> bool {

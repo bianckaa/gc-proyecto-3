@@ -82,7 +82,13 @@ pub fn find_outline_pixels(
                 if objects.get(nx, ny) == object_id {
                     neighbor_depth - depth > depth * RELATIVE_DEPTH_JUMP
                 } else {
-                    depth <= neighbor_depth
+                    // Exige dos pixeles exteriores consecutivos. Asi un hueco
+                    // aislado del screen-door transparente no se confunde con
+                    // la silueta real del objeto.
+                    let (bx, by) = (nx + dx, ny + dy);
+                    in_bounds(bx, by)
+                        && objects.get(bx, by) != object_id
+                        && depth <= neighbor_depth
                 }
             });
             if is_edge {
@@ -110,5 +116,25 @@ mod tests {
         find_outline_pixels(&objects, &depth_buffer, 0.1, 100.0, &mut outline);
         assert_eq!(outline.len(), 16);
         assert!(!outline.iter().any(|pixel| pixel.x == 12 && pixel.y == 12));
+    }
+
+    #[test]
+    fn isolated_transparency_hole_does_not_create_an_internal_outline() {
+        let mut objects = ObjectBuffer::new();
+        let mut depth_buffer = DepthBuffer::new();
+        for y in 10..17 {
+            for x in 10..17 {
+                if (x, y) != (13, 13) {
+                    objects.set(x, y, 1);
+                    depth_buffer.test_and_set(x, y, 0.5);
+                }
+            }
+        }
+        let mut outline = Vec::new();
+        find_outline_pixels(&objects, &depth_buffer, 0.1, 100.0, &mut outline);
+
+        assert!(!outline
+            .iter()
+            .any(|pixel| (pixel.x - 13).abs() + (pixel.y - 13).abs() == 1));
     }
 }

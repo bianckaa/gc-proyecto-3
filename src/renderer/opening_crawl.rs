@@ -66,12 +66,31 @@ const CRAWL_FADE_END: f32 = 4.6;
 const NEAR_PLANE: f32 = 0.05;
 const FAR_PLANE: f32 = 100.0;
 
+const ENDING_IMAGE_DURATION: f32 = 5.0;
+const ENDING_IMAGE_FADE: f32 = 0.8;
+const ENDING_IMAGE_HEIGHT: f32 = 0.92;
 const PAN_DURATION: f32 = 4.0;
 const PAN_LOOK_UP: f32 = 1.6;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RasterImage {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Vec<Color>,
+}
+
+impl RasterImage {
+    fn sample(&self, u: f32, v: f32) -> Color {
+        let x = ((u * self.width as f32) as usize).min(self.width.saturating_sub(1));
+        let y = ((v * self.height as f32) as usize).min(self.height.saturating_sub(1));
+        self.pixels[y * self.width + x]
+    }
+}
 
 pub struct OpeningCrawl {
     elapsed: f32,
     skipped_at: Option<f32>,
+    ending_image: Option<RasterImage>,
 }
 
 fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
@@ -127,6 +146,7 @@ impl OpeningCrawl {
         Self {
             elapsed: 0.0,
             skipped_at: None,
+            ending_image: None,
         }
     }
 
@@ -137,8 +157,21 @@ impl OpeningCrawl {
         }
     }
 
+    pub fn with_ending_image(mut self, image: Option<RasterImage>) -> Self {
+        self.ending_image = image;
+        self
+    }
+
+    fn ending_image_end(&self) -> f32 {
+        if self.ending_image.is_some() {
+            crawl_end() + ENDING_IMAGE_DURATION
+        } else {
+            crawl_end()
+        }
+    }
+
     fn pan_start(&self) -> f32 {
-        self.skipped_at.unwrap_or_else(crawl_end)
+        self.skipped_at.unwrap_or_else(|| self.ending_image_end())
     }
 
     pub fn is_finished(&self) -> bool {
@@ -166,6 +199,28 @@ impl OpeningCrawl {
         self.draw_prelude(framebuffer);
         self.draw_title(framebuffer);
         self.draw_crawl(framebuffer);
+        self.draw_ending_image(framebuffer);
+    }
+
+    fn draw_ending_image(&self, framebuffer: &mut Framebuffer) {
+        let Some(image) = &self.ending_image else {
+            return;
+        };
+        let start = crawl_end();
+        let intensity = fade_window(self.elapsed, start, self.ending_image_end(), ENDING_IMAGE_FADE);
+        if intensity <= 0.0 || image.width == 0 || image.height == 0 {
+            return;
+        }
+        let frame_height = framebuffer.height() as f32 * ENDING_IMAGE_HEIGHT;
+        let frame_width = frame_height * image.width as f32 / image.height as f32;
+        let left = ((framebuffer.width() as f32 - frame_width) * 0.5) as i32;
+        let top = ((framebuffer.height() as f32 - frame_height) * 0.5) as i32;
+        for y in 0..frame_height as i32 {
+            for x in 0..frame_width as i32 {
+                let color = image.sample(x as f32 / frame_width, y as f32 / frame_height);
+                plot(framebuffer, left + x, top + y, color, intensity);
+            }
+        }
     }
 
     fn draw_prelude(&self, framebuffer: &mut Framebuffer) {
@@ -289,6 +344,23 @@ mod tests {
         let mut framebuffer = Framebuffer::new();
         opening.draw(&mut framebuffer);
         lit_pixels(&framebuffer)
+    }
+
+    #[test]
+    fn ending_image_shows_after_the_crawl_and_delays_the_pan() {
+        let image = RasterImage {
+            width: 2,
+            height: 2,
+            pixels: vec![Color::new(200, 200, 200); 4],
+        };
+        let mut opening = OpeningCrawl::new().with_ending_image(Some(image));
+        opening.update(crawl_end() + ENDING_IMAGE_DURATION * 0.5, false);
+        let mut framebuffer = Framebuffer::new();
+        opening.draw(&mut framebuffer);
+        assert!(lit_pixels(&framebuffer) > 1000);
+        assert_eq!(opening.pan_progress(), 0.0);
+        opening.update(ENDING_IMAGE_DURATION + PAN_DURATION, false);
+        assert!(opening.is_finished());
     }
 
     #[test]

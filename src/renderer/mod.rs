@@ -1,3 +1,4 @@
+pub mod black_hole;
 pub mod clipping;
 pub mod culling;
 pub mod depth;
@@ -20,6 +21,7 @@ pub mod warp_effect;
 use crate::engine::camera::Camera;
 use crate::engine::math::{Mat4, Vec2, Vec3};
 use crate::debug::metrics::Metrics;
+use black_hole::BlackHoleEffect;
 use culling::Frustum;
 use depth::DepthBuffer;
 use dithering::{dither, screen_door_visible};
@@ -44,7 +46,8 @@ const LOD_HIGH_DISTANCE: f32 = 12.0;
 const LOD_MEDIUM_DISTANCE: f32 = 40.0;
 const CRATER_RIM_END: f32 = 1.4;
 const CRATER_RIM_HEIGHT: f32 = 0.3;
-const GAS_PLANET_OPACITY: f32 = 0.76;
+// El patron Bayer de 4x4 convierte 0.85 en 14/16 pixeles visibles (87.5%).
+const GAS_PLANET_OPACITY: f32 = 0.85;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vertex {
@@ -65,6 +68,7 @@ pub struct Material {
     pub emissive: Vec3,
     pub shader: ShaderKind,
     pub outline: bool,
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,6 +103,15 @@ impl LodGroup {
     }
 }
 
+fn effective_opacity(material: &Material) -> f32 {
+    let shader_opacity = if material.shader == ShaderKind::GasPlanet {
+        GAS_PLANET_OPACITY
+    } else {
+        1.0
+    };
+    material.opacity.clamp(0.0, 1.0) * shader_opacity
+}
+
 struct QueuedLine {
     start: Vec3,
     end: Vec3,
@@ -116,6 +129,7 @@ pub struct Renderer {
     pub normal_mapping_enabled: bool,
     pub nebula_enabled: bool,
     pub warp: WarpEffect,
+    pub black_hole: BlackHoleEffect,
     pub metrics: Metrics,
     framebuffer: Framebuffer,
     depth_buffer: DepthBuffer,
@@ -139,6 +153,7 @@ impl Renderer {
             normal_mapping_enabled: true,
             nebula_enabled: true,
             warp: WarpEffect::new(),
+            black_hole: BlackHoleEffect::new(),
             metrics: Metrics::new(),
             framebuffer: Framebuffer::new(),
             depth_buffer: DepthBuffer::new(),
@@ -153,6 +168,14 @@ impl Renderer {
 
     pub fn pixels(&self) -> &[u8] {
         self.framebuffer.pixels()
+    }
+
+    pub fn fade_to_white(&mut self, amount: f32) {
+        self.framebuffer.fade_to_white(amount);
+    }
+
+    pub fn tint_screen(&mut self, color: Color, amount: f32) {
+        self.framebuffer.tint(color, amount);
     }
 
     pub fn framebuffer_mut(&mut self) -> &mut Framebuffer {
@@ -194,6 +217,10 @@ impl Renderer {
                 .filter(|_| self.lod_enabled)
                 .map_or(object.mesh, |group| group.select(relative_distance));
             let material = object.material;
+            let opacity = effective_opacity(&material);
+            if opacity <= 0.0 {
+                continue;
+            }
             let object_id = index as u32 + 1;
             let stats = pipeline::draw_mesh(
                 &mut self.framebuffer,
@@ -203,8 +230,8 @@ impl Renderer {
                 view_projection,
                 |fragment| {
                     if dithering_enabled
-                        && material.shader == ShaderKind::GasPlanet
-                        && !screen_door_visible(GAS_PLANET_OPACITY, fragment.x, fragment.y)
+                        && opacity < 1.0
+                        && !screen_door_visible(opacity, fragment.x, fragment.y)
                     {
                         return None;
                     }
@@ -216,28 +243,19 @@ impl Renderer {
                         time,
                         normal_map: normal_map.filter(|_| normal_mapping_enabled),
                     });
-                    if material.shader == ShaderKind::GasPlanet {
-                        let color = Color::from_unit(
-                            surface.color * (0.72 + surface.intensity * 0.28),
-                        );
-                        if dithering_enabled {
-                            Some(FragmentOutput::opaque(color))
-                        } else {
-                            Some(FragmentOutput {
-                                color,
-                                opacity: GAS_PLANET_OPACITY,
-                            })
-                        }
-                    } else if dithering_enabled {
-                        Some(FragmentOutput::opaque(dither(
-                            surface,
-                            fragment.x,
-                            fragment.y,
-                        )))
+                    // Los planetas comparten el mismo corte de luz de la nave:
+                    // cada fragmento conserva su color o cae a negro segun el
+                    // patron ordenado. En sombra quedan apenas unos puntos, en
+                    // lugar del gradiente atmosferico de la ruta realista.
+                    let color = if dithering_enabled {
+                        dither(surface, fragment.x, fragment.y)
                     } else {
-                        Some(FragmentOutput::opaque(Color::from_unit(
-                            surface.color * surface.intensity,
-                        )))
+                        Color::from_unit(surface.color * surface.intensity)
+                    };
+                    if dithering_enabled || opacity >= 1.0 {
+                        Some(FragmentOutput::opaque(color))
+                    } else {
+                        Some(FragmentOutput { color, opacity })
                     }
                 },
             );
@@ -267,6 +285,9 @@ impl Renderer {
                 line.dashed,
             );
         }
+
+        self.black_hole
+            .apply(&mut self.framebuffer, view_projection, time);
 
         self.warp
             .apply(&mut self.framebuffer, self.skybox.visible_stars());
@@ -312,6 +333,10 @@ impl Renderer {
     pub fn draw_crosshair(&mut self, color: Color) {
         let center_x = self.framebuffer.width() as i32 / 2;
         let center_y = self.framebuffer.height() as i32 / 2;
+        self.draw_crosshair_at(center_x, center_y, color);
+    }
+
+    pub fn draw_crosshair_at(&mut self, center_x: i32, center_y: i32, color: Color) {
         let radius = CROSSHAIR_RADIUS;
         self.draw_line_2d(center_x - radius, center_y, center_x + radius, center_y, color);
         self.draw_line_2d(center_x, center_y - radius, center_x, center_y + radius, color);
